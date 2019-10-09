@@ -6,6 +6,7 @@ import { Hex } from "./hex";
 import { assertNever } from "./never";
 import { makeNonce } from "./nonce";
 import { RequestId, requestIdOf } from "./requestId";
+import { sign } from "tweetnacl";
 
 // TODO:
 // * Handle errors everywhere we `await`
@@ -20,9 +21,14 @@ export interface Request extends Record<string, any> {
   // submitted more than once: https://dfinity.atlassian.net/browse/DFN-895
   nonce: Buffer;
   // sender:;
-  // sender_pubkey: Buffer;
-  // sender_sig: Buffer;
+  sender_pubkey: Buffer;
+  sender_sig: Buffer;
 }
+
+
+
+
+
 
 interface Response extends Record<string, any> {}
 
@@ -91,6 +97,13 @@ enum QueryResponseStatus {
   Rejected = "rejected",
 }
 
+
+// XXX Review
+export const generateKeyPair = () => sign.keyPair();
+const pairKeys = generateKeyPair();
+export const signMessage = (message : Buffer) => sign(message, pairKeys.secretKey);
+
+
 // Pattern match on the response to a query request.
 // TODO: matchQueryResponse
 
@@ -107,6 +120,10 @@ const makeQueryRequest = (
 ): QueryRequest => ({
   request_type: ReadRequestType.Query,
   nonce: config.nonceFn(),
+  sender_pubkey: pairKeys.publicKey,
+// We sign the hash of the body which forms the request id.
+// XXX -testing
+  sender_sig: signMessage(arg),
   canister_id: config.canisterId,
   method_name: methodName,
   arg,
