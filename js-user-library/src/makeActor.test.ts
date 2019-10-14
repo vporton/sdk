@@ -59,9 +59,14 @@ test("makeActor", async () => {
     Buffer.from([3, 4, 5, 6, 7, 8, 9, 0]),
   ];
 
+// XXX This is going to Fail
   const expectedCallRequest = {
     request_type: "call",
     nonce: nonces[0],
+    sender_pubkey: Buffer.from([0, 1, 2, 3, 4, 5, 6, 7]),
+// We sign the hash of the body which forms the request id.
+// XXX -testing
+    sender_sig: Buffer.from([0, 1, 2, 3, 4, 5, 6, 7]),
     canister_id: canisterId.fromHex(canisterIdent),
     method_name: methodName,
     arg,

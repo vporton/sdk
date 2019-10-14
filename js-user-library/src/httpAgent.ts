@@ -21,6 +21,7 @@ export interface Request extends Record<string, any> {
   // submitted more than once: https://dfinity.atlassian.net/browse/DFN-895
   nonce: Buffer;
   // sender:;
+  sender: Buffer;
   sender_pubkey: Buffer;
   sender_sig: Buffer;
 }
@@ -100,6 +101,8 @@ enum QueryResponseStatus {
 
 // XXX Review
 export const generateKeyPair = () => sign.keyPair();
+// Load file
+
 const pairKeys = generateKeyPair();
 export const signMessage = (message : Buffer) => sign(message, pairKeys.secretKey);
 
@@ -120,10 +123,10 @@ const makeQueryRequest = (
 ): QueryRequest => ({
   request_type: ReadRequestType.Query,
   nonce: config.nonceFn(),
-  sender_pubkey: pairKeys.publicKey,
+  sender_pubkey: Buffer.from(pairKeys.publicKey),
 // We sign the hash of the body which forms the request id.
 // XXX -testing
-  sender_sig: signMessage(arg),
+  sender_sig: Buffer.from(signMessage(arg)),
   canister_id: config.canisterId,
   method_name: methodName,
   arg,
@@ -211,6 +214,12 @@ const makeRequestStatusRequest = (
 ): RequestStatusRequest => ({
   request_type: ReadRequestType.RequestStatus,
   nonce: config.nonceFn(),
+  sender_pubkey: Buffer.from(pairKeys.publicKey),
+// We sign the hash of the body which forms the request id.
+// XXX -testing
+//
+// NOTE: This is incorrect --
+  sender_sig: Buffer.from(signMessage(requestId)),
   request_id: requestId,
 });
 
@@ -274,6 +283,12 @@ const makeCallRequest = (
 ): CallRequest => ({
   request_type: SubmitRequestType.Call,
   nonce: config.nonceFn(),
+  // Dummy user id set.
+  user_id: Buffer.from("1"),
+  sender_pubkey: Buffer.from(pairKeys.publicKey),
+// We sign the hash of the body which forms the request id.
+// XXX -testing
+  sender_sig: Buffer.from(signMessage(arg)),
   canister_id: config.canisterId,
   method_name: methodName,
   arg,
