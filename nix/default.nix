@@ -21,7 +21,7 @@ let
       url = "ssh://git@github.com/dfinity-lab/common";
       rev = "1e0bcae55fb9290aa197576ee1aaa88767e375a2";
     };
-in import commonSrc {
+in import ~/common {
   inherit system crossSystem config;
   overlays = import ./overlays ++ overlays;
  }
