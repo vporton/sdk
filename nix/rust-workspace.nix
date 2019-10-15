@@ -40,8 +40,8 @@ drv.overrideAttrs (oldAttrs: {
   '';
 
   nativeBuildInputs = oldAttrs.nativeBuildInputs ++ lib.optionals doDoc [
-    cargo-graph
-    graphviz
+    #cargo-graph
+    #graphviz
   ];
 
   postDoc = oldAttrs.postDoc + ''
