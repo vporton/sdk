@@ -46,12 +46,13 @@ drv.overrideAttrs (oldAttrs: {
 
   postDoc = oldAttrs.postDoc + ''
     pushd dfx
-    cargo graph | dot -Tsvg > ../target/doc/dfx/cargo-graph.svg
+    mkdir -p $out/cargo-graph
+    cargo graph | dot -Tsvg > $out/cargo-graph/dfx.svg
     popd
   '';
 
   postInstall = oldAttrs.postInstall + lib.optionalString doDoc ''
-    echo "report cargo-graph-dfx $doc dfx/cargo-graph.svg" >> \
+    echo "report cargo-graph-dfx $out cargo-graph/dfx.svg" >> \
       $doc/nix-support/hydra-build-products
   '';
 })
