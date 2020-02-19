@@ -7,6 +7,7 @@ in
 pkgs.napalm.buildPackage src {
   root = ./.;
   name = "dfinity-sdk-userlib-js";
+  outputs = [ "out" "lib" ];
   # ci script now does everything CI should do. Bundle is needed because it's the output
   # of the nix derivation.
   npmCommands = [
@@ -16,7 +17,8 @@ pkgs.napalm.buildPackage src {
   ];
 
   installPhase = ''
-    mkdir -p $out
+    mkdir -p $out $lib
+    cp -r node_modules $lib
     cp -R dist $out
     cp package.json $out
     cp README.adoc $out

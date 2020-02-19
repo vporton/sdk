@@ -3,7 +3,7 @@
 , dfx ? import ../dfx.nix { inherit pkgs; }
 }:
 let
-  e2e = lib.noNixFiles (lib.gitOnlySource ../. "e2e");
+  e2e = lib.noNixFiles (lib.gitOnlySource ../../. "e2e/bats");
   lib = pkgs.lib;
   sources = pkgs.sources;
 

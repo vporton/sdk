@@ -1,0 +1,13 @@
+{
+  "private": true,
+  "name": "_node-e2e-tests",
+  "version": "0.1.0",
+  "scripts": {
+    "ci": "npm run test",
+    "test": "node ./test.js"
+  },
+  "devDependencies": {
+    "jest": "25.1.0"
+  },
+  "dependencies": {}
+}
