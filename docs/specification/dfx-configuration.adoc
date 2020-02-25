@@ -1,0 +1,48 @@
+= Configuration of `dfx` Command Line
+Hans Larsen <hans.larsen@dfinity.org>
+v0.1, 2020-02-24
+:draft:
+
+
+DFX has certain default values that are hard coded in its binary. This spec documents
+the way users can overwrite those values.
+
+It is currently meant as a reference and philosophy, as many of our flags and options
+are not following this document. We should do a full check prior to 1.0 release.
+
+== Resolution
+There are 5 levels of resolution for options. They are in order of priority; the first
+one which return a value sets it.
+
+These descriptions use `port` as an example.
+
+1. **Command-line flags**. If a user passes in a command line flag for a value (e.g.
+   `+--port=1234+`), it is used. This is useful so that users can modify the options
+   without changing files or setting their environment. It is also the most visible.
+   This should be used as one-offs and are verbose (ie. they need to be repeated
+   everytime for every execution).
+2. **Environment variables**. If a user defines an environment variable with the
+   name `DFX_FLAGS_<COMMAND_NAME>` followed by a command-line like list of arguments.
+   For subcommands, it would be `DFX_FLAGS_<COMMAND_NAME>_<SUBCOMMAND>`. For example,
+   setting a default port to `dfx start` would use `DFX_FLAGS_START=--port=2345`. This
+   is useful for CI environments that can apply configurations that overrides
+   project and user configuration.
+3. **User configuration file**. `dfx` looks for a global file at
+   `$HOME/.cache/dfinity/versions/$DFX_VERSION/dfx.json`. If that file is there,
+   `dfx` will read its `flags` key, which will contain 1 key for each commands, which
+   contains 1 key for each flags, which value will be used as the value for the flag.
+4. **Local configuration file**. `dfx` will use the `dfx.json` in the path or any
+   parent directory (also known as the project configuration), and use a key
+   `flags` the same way as the user configuration file.
+5. **Default hard coded value**. Whichever is hardcoded in our code as the ultimate
+   default value for the flag in `dfx`.
+
+== Non Command-Line Flags
+Certain environment variable are also available to affect the behaviour of DFX. These
+are normally used to control
+
+== Version
+
+== Warnings
+By default, `dfx` will show health check and other quality of life warnings that might
+be of interest to the user. The user can disable those using a `warning` option.
