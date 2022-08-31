@@ -29,8 +29,10 @@ jobs:
       #   with:
       #     name: dfx-${{ matrix.os }}-rs-${{ matrix.rust }}
       #     path: /usr/local/bin
+      # - name: Download dfx binary
+      #   run: cargo install --path src/dfx
       - name: Download dfx binary
-        run: cargo install --path src/dfx
+        run: DFX_VERSION=0.12.0-beta.1 sh -ci "$(curl -fsSL https://smartcontracts.org/install.sh)"
 
        # Setup canisters
       - name: Deploy default dfx project
