@@ -1,6 +1,6 @@
 name: run e2e web browser tests
-on:
-  workflow_dispatch:
+on: push
+
 
 jobs:
   scrape:
