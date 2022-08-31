@@ -24,11 +24,13 @@ jobs:
         run: sudo apt-get install xvfb
 
        # Setup dfx
+      # - name: Download dfx binary
+      #   uses: actions/download-artifact@v2
+      #   with:
+      #     name: dfx-${{ matrix.os }}-rs-${{ matrix.rust }}
+      #     path: /usr/local/bin
       - name: Download dfx binary
-        uses: actions/download-artifact@v2
-        with:
-          name: dfx-${{ matrix.os }}-rs-${{ matrix.rust }}
-          path: /usr/local/bin
+        run: cargo install --path src/dfx
 
        # Setup canisters
       - name: Deploy default dfx project
