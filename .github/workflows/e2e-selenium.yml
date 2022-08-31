@@ -8,6 +8,8 @@ jobs:
     steps:
       - name: Checking out repo
         uses: actions/checkout@v2
+
+       # Setup python
       - name: Setting up Python
         uses: actions/setup-python@v2
         with:
@@ -16,12 +18,29 @@ jobs:
         run: apt list --installed
       - name: Removing previous chrome instances on runner
         run: sudo apt purge google-chrome-stable
-
-       # Need to fetch reqs if needed
       - name: Installing all necessary packages
         run: pip install chromedriver-autoinstaller selenium pyvirtualdisplay
       - name: Install xvfb
         run: sudo apt-get install xvfb
 
+       # Setup dfx
+      - name: Download dfx binary
+        uses: actions/download-artifact@v2
+        with:
+          name: dfx-${{ matrix.os }}-rs-${{ matrix.rust }}
+          path: /usr/local/bin
+
+       # Setup canisters
+      - name: Deploy default dfx project
+        run: |
+          dfx new e2e_project
+          cd e2e_project
+          dfx start --background --clean
+          dfx deploy
+          echo "REPLICA_HOST=http://127.0.0.1:$(dfx info webserver-port)" >> $GITHUB_ENV
+          echo "FRONTEND_CANISTER_ID=$(dfx canister id e2e_project_frontend)" >> $GITHUB_ENV
+          echo "CANDID_CANISTER_ID=$(dfx canister id e2e_project_backend)" >> $GITHUB_ENV
+
+       # Run script
       - name: Running the Python script
-        run: python scripts/workflows/selenium-e2e-test.py
+        run: python scripts/workflows/selenium-e2e-test.py $REPLICA_HOST $FRONTEND_CANISTER_ID $CANDID_CANISTER_ID
