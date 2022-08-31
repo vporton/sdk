@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import time
+import sys
 
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -91,10 +92,7 @@ def main():
 
     driver = prepare_driver()
 
-    # TODO: get these from CLI
-    host = "http://127.0.0.1:8000"
-    candid_canister_id = "r7inp-6aaaa-aaaaa-aaabq-cai"
-    frontend_canister_id = "rrkah-fqaaa-aaaaa-aaaaq-cai"
+    _, host, candid_canister_id, frontend_canister_id = sys.argv
 
     candid_e2e = TestE2eCandidCanister(host, candid_canister_id, frontend_canister_id)
     frontend_e2e = TestE2eFrontendCanister(host, frontend_canister_id)
