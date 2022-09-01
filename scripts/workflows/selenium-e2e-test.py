@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 import time
 import sys
+from typing import Any, List
+import re
 
 from selenium import webdriver
+from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.desired_capabilities import DesiredCapabilities
@@ -14,46 +17,102 @@ display.start()
 
 
 class TestE2eCandidCanister:
-    url_template = "{host}/?canisterId={canister_id}?id={asset_canister_id}"
+    expected_console_log_entries = [
+        {
+            "level": "SEVERE",
+            "message": "http://127.0.0.1:4943/api/v2/canister/aaa-aaaaa-aaa/read_state - Failed to load resource: the server responded with a status of 404 (Not Found)",
+            "source": "network",
+        },
+        {
+            "level": "WARNING",
+            "message": "http://127.0.0.1:4943/index.js 1 Invalid asm.js: Unexpected token",
+            "source": "javascript",
+        },
+        {
+            "level": "WARNING",
+            "message": 'http://127.0.0.1:4943/index.js 1:105942 "Expected to find result for path [object Object], but instead found nothing."',
+            "source": "console-api",
+        },
+    ]
 
-    def __init__(self, host: str, canister_id: str, asset_canister_id: str):
-        self.canister_id = canister_id
-        self.asset_canister_id = asset_canister_id
-        self.host = host
-        self.url = self.url_template.format(
-            host=host, canister_id=canister_id, asset_canister_id=asset_canister_id
+    def __init__(self, url: str):
+        self.expected_console_log_entries[0][
+            "message"
+        ] = self.expected_console_log_entries[0]["message"].replace(
+            "aaa-aaaaa-aaa", url.split("&id=")[-1]
         )
+        self.url = url
 
-    def test_candid_ui_canister_interactions(self, driver: webdriver.Chrome):
-        driver.get(self.url)
-
-    def test_candid_ui_canister_console_log(self, driver: webdriver.Chrome):
+    def test_website(self, driver: webdriver.Chrome):
         time.sleep(5)
-        driver.get_log("browser")
+        driver.find_element(By.ID, "greet").find_element(
+            By.CLASS_NAME, "input-container"
+        ).find_element(By.TAG_NAME, "input").send_keys("hello")
+        driver.find_element(By.ID, "greet").find_element(
+            By.CLASS_NAME, "button-container"
+        ).find_element(By.XPATH, '//button[text()="Query"]').click()
 
-    def test(self, driver: webdriver.Chrome):
-        self.test_candid_ui_canister_interactions(driver)
-        self.test_candid_ui_canister_console_log(driver)
+        output = [
+            o.text
+            for o in driver.find_element(By.ID, "console").find_elements(
+                By.CLASS_NAME, "output-line"
+            )
+        ]
+        try:
+            assert output == ["""› greet("hello")""", """("Hello, hello!")"""]
+        except AssertionError:
+            return ["text not matching input"]
+        else:
+            return []
+
+    def test_console_log(self, driver: webdriver.Chrome):
+        time.sleep(5)
+        errors = []
+        for log in driver.get_log("browser"):
+            log.pop("timestamp", None)
+            # log['message'] =
+            if log not in self.expected_console_log_entries:
+                errors.append(log)
+        return errors
+
+    def test(self, driver: webdriver.Chrome) -> List[Any]:
+        driver.get(self.url)
+        errors = self.test_website(driver) + self.test_console_log(driver)
+        # driver.close()
+        return errors
 
 
 class TestE2eFrontendCanister:
-    url_template = "{host}/?canisterId={canister_id}"
+    expected_console_log_entries = []
 
-    def __init__(self, host: str, canister_id: str):
-        self.host = host
-        self.canister_id = canister_id
-        self.url = self.url_template.format(host=host, canister_id=canister_id)
+    def __init__(self, url: str):
+        self.url = url
 
-    def test_asset_canister_interactions(self, driver: webdriver.Chrome):
-        driver.get(self.url)
+    def test_website(self, driver: webdriver.Chrome):
+        driver.find_element(By.ID, "name").send_keys("hello")
+        driver.find_element(By.TAG_NAME, "button").click()
+        time.sleep(2)
+        try:
+            assert driver.find_element(By.ID, "greeting").text == "Hello, hello!"
+        except AssertionError:
+            return ["text not matching input"]
+        else:
+            return []
 
-    def test_asset_canister_console_log(self, driver: webdriver.Chrome):
+    def test_console_log(self, driver: webdriver.Chrome):
         time.sleep(5)
-        driver.get_log("browser")
+        errors = []
+        for log in driver.get_log("browser"):
+            log.pop("timestamp", None)
+            if log not in self.expected_console_log_entries:
+                errors.append(log)
+        return errors
 
-    def test(self, driver: webdriver.Chrome):
-        self.test_asset_canister_interactions(driver)
-        self.test_asset_canister_console_log(driver)
+    def test(self, driver: webdriver.Chrome) -> List[Any]:
+        driver.get(self.url)
+        errors = self.test_website(driver) + self.test_console_log(driver)
+        # driver.close()
+        return errors
 
 
 def main():
@@ -90,15 +149,35 @@ def main():
 
         return driver
 
+    _, frontend_url, candid_ui_url = sys.argv
+    print(f"{frontend_url = }")
+    print(f"{candid_ui_url = }")
+
     driver = prepare_driver()
+    print(f"initialized {driver = }")
 
-    _, host, candid_canister_id, frontend_canister_id = sys.argv
+    try:
+        frontend_errors = TestE2eFrontendCanister(frontend_url).test(driver)
+        candid_errors = TestE2eCandidCanister(candid_ui_url).test(driver)
+    except Exception as e:
+        print(f"Exception: {e}")
+        raise e
 
-    candid_e2e = TestE2eCandidCanister(host, candid_canister_id, frontend_canister_id)
-    frontend_e2e = TestE2eFrontendCanister(host, frontend_canister_id)
+    raise_me = False
 
-    candid_e2e.test(driver)
-    frontend_e2e.test(driver)
+    try:
+        assert not candid_errors
+    except AssertionError as e:
+        print(f"{candid_errors = }")
+        raise_me = True
+    try:
+        assert not frontend_errors
+    except AssertionError as e:
+        print(f"{frontend_errors = }")
+        raise_me = True
+
+    if raise_me:
+        raise AssertionError("There were errors")
 
 
 if __name__ == "__main__":

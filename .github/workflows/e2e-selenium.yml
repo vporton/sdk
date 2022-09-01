@@ -40,11 +40,10 @@ jobs:
           dfx new e2e_project
           cd e2e_project
           dfx start --background --clean
-          dfx deploy
-          echo "REPLICA_HOST=http://127.0.0.1:$(dfx info webserver-port)" >> $GITHUB_ENV
-          echo "FRONTEND_CANISTER_ID=$(dfx canister id e2e_project_frontend)" >> $GITHUB_ENV
-          echo "CANDID_CANISTER_ID=$(dfx canister id e2e_project_backend)" >> $GITHUB_ENV
+          dfx deploy 2>&1 | tee deploy.log
+          echo "FRONTEND_URL=$(cat deploy.log | grep "_backend:" | grep -Eo "(http|https)://[a-zA-Z0-9./?=_&%:-]*)" >> $GITHUB_ENV
+          echo "CANDID_URL=$(cat deploy.log | grep "_frontend:" | grep -Eo "(http|https)://[a-zA-Z0-9./?=_&%:-]*)" >> $GITHUB_ENV
 
        # Run script
       - name: Running the Python script
-        run: python scripts/workflows/selenium-e2e-test.py $REPLICA_HOST $FRONTEND_CANISTER_ID $CANDID_CANISTER_ID
+        run: python scripts/workflows/selenium-e2e-test.py $FRONTEND_URL $CANDID_URL
