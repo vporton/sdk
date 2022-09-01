@@ -66,7 +66,6 @@ class TestE2eCandidCanister:
             return []
 
     def test_console_log(self, driver: webdriver.Chrome):
-        time.sleep(5)
         errors = []
         for log in driver.get_log("browser"):
             log.pop("timestamp", None)
@@ -77,6 +76,7 @@ class TestE2eCandidCanister:
 
     def test(self, driver: webdriver.Chrome) -> List[Any]:
         driver.get(self.url)
+        time.sleep(5)
         errors = self.test_website(driver) + self.test_console_log(driver)
         # driver.close()
         return errors
@@ -100,7 +100,6 @@ class TestE2eFrontendCanister:
             return []
 
     def test_console_log(self, driver: webdriver.Chrome):
-        time.sleep(5)
         errors = []
         for log in driver.get_log("browser"):
             log.pop("timestamp", None)
@@ -110,6 +109,7 @@ class TestE2eFrontendCanister:
 
     def test(self, driver: webdriver.Chrome) -> List[Any]:
         driver.get(self.url)
+        time.sleep(5)
         errors = self.test_website(driver) + self.test_console_log(driver)
         # driver.close()
         return errors
