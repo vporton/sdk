@@ -3,7 +3,7 @@ on: push
 
 
 jobs:
-  scrape:
+  "e2e selenium":
     runs-on: ubuntu-latest
     steps:
       - name: Checking out repo
