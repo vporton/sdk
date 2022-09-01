@@ -37,12 +37,12 @@ jobs:
        # Setup canisters
       - name: Deploy default dfx project
         run: |
-          dfx new e2e_project
-          cd e2e_project
+          dfx new fff
+          cd fff
           dfx start --background --clean
           dfx deploy 2>&1 | tee deploy.log
-          echo "FRONTEND_URL=$(cat deploy.log | grep "_backend:" | grep -Eo "(http|https)://[a-zA-Z0-9./?=_&%:-]*)" >> $GITHUB_ENV
-          echo "CANDID_URL=$(cat deploy.log | grep "_frontend:" | grep -Eo "(http|https)://[a-zA-Z0-9./?=_&%:-]*)" >> $GITHUB_ENV
+          echo FRONTEND_URL=$(cat deploy.log | grep "_backend:" | grep -Eo "(http|https)://[a-zA-Z0-9./?=_&%:-]*") >> $GITHUB_ENV
+          echo CANDID_URL=$(cat deploy.log | grep "_frontend:" | grep -Eo "(http|https)://[a-zA-Z0-9./?=_&%:-]*") >> $GITHUB_ENV
 
        # Run script
       - name: Running the Python script
