@@ -3,7 +3,7 @@ on: push
 
 
 jobs:
-  "e2e selenium":
+  e2e-selenium:
     runs-on: ubuntu-latest
     steps:
       - name: Checking out repo
