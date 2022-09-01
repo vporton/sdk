@@ -76,7 +76,8 @@ class TestE2eCandidCanister:
 
     def test(self, driver: webdriver.Chrome) -> List[Any]:
         driver.get(self.url)
-        time.sleep(5)
+        time.sleep(8)
+        print(driver.page_source)
         errors = self.test_website(driver) + self.test_console_log(driver)
         # driver.close()
         return errors
@@ -109,7 +110,8 @@ class TestE2eFrontendCanister:
 
     def test(self, driver: webdriver.Chrome) -> List[Any]:
         driver.get(self.url)
-        time.sleep(5)
+        time.sleep(8)
+        print(driver.page_source)
         errors = self.test_website(driver) + self.test_console_log(driver)
         # driver.close()
         return errors
