@@ -24,8 +24,46 @@ function initCanisterEnv() {
   const network =
     process.env.DFX_NETWORK ||
     (process.env.NODE_ENV === "production" ? "ic" : "local");
+  let networkType;
 
-  const canisterConfig = network === "local" ? localCanisters : prodCanisters;
+  if (network === "local") {
+    networkType = "ephemeral";
+  } else if (network === "ic") {
+    networkType = "persistent";
+  } else {
+    const manifest = require("dfx.json");
+    const networkConfig = manifest.networks?.[network];
+    if (networkConfig) {
+      if ("type" in networkConfig) {
+        networkType = networkConfig.type;
+      } else if ("providers" in networkConfig) {
+        networkType = "persistent";
+      } else {
+        networkType = "ephemeral";
+      }
+    } else if (network.startsWith("https___")) {
+      networkType = "persistent";
+    } else {
+      networkType = "ephemeral";
+    }
+  }
+  let canisterConfig;
+  switch (networkType) {
+    case "ephemeral":
+      if (localCanisters == null) {
+        throw new Error("Could not find local canister IDs (have the canisters been created?)");
+      }
+      canisterConfig = localCanisters;
+      break;
+    case "persistent":
+      if (prodCanisters == null) {
+        throw new Error("Could not find file ./canister_ids.json (have you created it?)");
+      }
+      canisterConfig = prodCanisters;
+      break;
+    default:
+      throw new Error(`Unknown network type ${networkType}, expected 'ephemeral' or 'persistent'`);
+  }
 
   return Object.entries(canisterConfig).reduce((prev, current) => {
     const [canisterName, canisterDetails] = current;
