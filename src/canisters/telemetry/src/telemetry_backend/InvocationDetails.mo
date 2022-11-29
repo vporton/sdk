@@ -1,16 +1,16 @@
 import Hash "mo:base/Hash";
 import Text "mo:base/Text";
 
+import DfxVersion "DfxVersion";
 import Network "Network";
 import Platform "Platform";
 
 module InvocationDetails
 {
+  type DfxVersion = DfxVersion.DfxVersion;
   type Hash = Hash.Hash;
   type Network = Network.Network;
   type Platform = Platform.Platform;
-
-  public type DfxVersion = Text;
 
   public type InvocationDetails = {
     dfxVersion : DfxVersion;

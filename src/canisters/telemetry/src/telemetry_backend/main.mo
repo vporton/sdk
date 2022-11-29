@@ -4,36 +4,58 @@ import Int "mo:base/Int";
 import Nat "mo:base/Nat";
 import Option "mo:base/Option";
 import Prelude "mo:base/Prelude";
+import Text "mo:base/Text";
 import Time "mo:base/Time";
 import Trie "mo:base/Trie";
 
+import ActiveUsers "ActiveUsers";
 import Aggregation "Aggregation";
 import CommandDetails "CommandDetails";
 import CommandResults "CommandResults";
 import Data "Data";
+import DfxVersion "DfxVersion";
 import InvocationDetails "InvocationDetails";
 import Interface "Interface";
+import Platform "Platform";
 
 actor {
   type Time = Time.Time;
   type Trie<K, V> = Trie.Trie<K, V>;
   type Trie2D<K1, K2, V> = Trie.Trie2D<K1, K2, V>;
 
+  type ActiveUsers = ActiveUsers.ActiveUsers;
+  type ActiveUsersByVersion = ActiveUsers.ActiveUsersByVersion;
+  type ActiveUsersEntry = Interface.ActiveUsersEntry;
   type AggregationPeriodStart = Aggregation.AggregationPeriodStart;
   type CommandDetails = CommandDetails.CommandDetails;
+  type DfxVersion = DfxVersion.DfxVersion;
   type InvocationDetails = InvocationDetails.InvocationDetails;
   type CommandResultsEntry = Interface.CommandResultsEntry;
   type CommandResultCounts = CommandResults.CommandResultCounts;
   type CommandSuccessRatesEntry = Interface.CommandSuccessRatesEntry;
+  type Platform = Platform.Platform;
+  type ReportPeriodicUseArgs = Interface.ReportPeriodicUseArgs;
   type ReportCommandArgs = Interface.ReportCommandArgs;
   type V0 = Data.V0;
+  type V1 = Data.V1;
 
   let nsPerDay = 86_400 * 1000_000_000;
   let nsPer30Days = 30 * nsPerDay;
 
-  stable var versioned : Data.Versioned = #v0(Data.new());
-  let data : Data.Data = switch (versioned) {
-    case (#v0 v0) v0;
+  stable var versioned : Data.Versioned = #v1(Data.new());
+  var data : Data.Data = switch (versioned) {
+    case (#v1 v1) v1;
+    case (_) Data.new();
+  };
+
+  system func postupgrade() {
+    switch (versioned) {
+      case (#v0 v0) {
+        data := Data.fromV0(v0);
+        versioned := #v1(data);
+      };
+      case (#v1 v1) {};
+    };
   };
 
   func currentTime() : Time {
@@ -166,6 +188,156 @@ actor {
           }
         });
     }
+  };
+
+  // Active Users (by platform)
+
+  func reportActiveUser(
+    activeUsers : ActiveUsers,
+    aggregationPeriod : AggregationPeriodStart,
+    platform : Platform
+  ) : ActiveUsers {
+    let k1 = { key = aggregationPeriod; hash = Int.hash aggregationPeriod };
+    let k2 = { key = platform; hash = Platform.hash(platform) };
+
+    let (t,v) = Trie.remove2D(
+      activeUsers,
+      k1, Int.equal,
+      k2, Platform.equal);
+    let users = Option.get(v, 0) + 1;
+
+    Trie.put2D(
+      t,
+      k1, Int.equal,
+      k2, Platform.equal,
+      users);
+  };
+
+  func getActiveUsersReportingPeriods(
+    activeUsers : ActiveUsers
+  ) : [AggregationPeriodStart] {
+    Trie.toArray(
+      activeUsers,
+      func (
+        k: AggregationPeriodStart,
+        v: Trie<Platform, Nat>
+      ) : AggregationPeriodStart {
+        k
+      }
+    )
+  };
+
+  func getActiveUsers(
+    activeUsers : ActiveUsers,
+    aggregationPeriod: AggregationPeriodStart
+  ) : [ActiveUsersEntry] {
+    let x1 = Trie.find(activeUsers,
+      { key = aggregationPeriod; hash = Int.hash aggregationPeriod },
+      Int.equal);
+
+    switch (x1) {
+      case null [];
+      case (?t) Trie.toArray(t,
+        func(
+          k : Platform,
+          v : Nat
+        ) : ActiveUsersEntry {
+          {
+            platform = k;
+            users = v;
+          }
+        });
+    }
+  };
+
+
+  // Active Users (by dfx version)
+
+  func reportActiveUserByVersion(
+    activeUsers : ActiveUsersByVersion,
+    aggregationPeriod : AggregationPeriodStart,
+    dfxVersion : DfxVersion,
+    platform : Platform
+  ) : ActiveUsersByVersion {
+    let k1 = { key = aggregationPeriod; hash = Int.hash aggregationPeriod };
+    let k2 = { key = dfxVersion; hash = Text.hash dfxVersion };
+    let k3 = { key = platform; hash = Platform.hash(platform) };
+
+    let (t,v) = Trie.remove3D(
+      activeUsers,
+      k1, Int.equal,
+      k2, Text.equal,
+      k3, Platform.equal);
+    let users = Option.get(v, 0) + 1;
+
+    Trie.put3D(
+      t,
+      k1, Int.equal,
+      k2, Text.equal,
+      k3, Platform.equal,
+      users);
+  };
+
+  func getActiveUsersByVersionReportingPeriods(
+    activeUsers : ActiveUsers
+  ) : [AggregationPeriodStart] {
+    Trie.toArray(
+      activeUsers,
+      func (
+        k: AggregationPeriodStart,
+        v: Trie<Platform, Nat>
+      ) : AggregationPeriodStart {
+        k
+      }
+    )
+  };
+
+  func getActiveUsersByVersion(
+    activeUsers : ActiveUsers,
+    aggregationPeriod: AggregationPeriodStart
+  ) : [ActiveUsersEntry] {
+    let x1 = Trie.find(activeUsers,
+      { key = aggregationPeriod; hash = Int.hash aggregationPeriod },
+      Int.equal);
+
+    switch (x1) {
+      case null [];
+      case (?t) Trie.toArray(t,
+        func(
+          k : Platform,
+          v : Nat
+        ) : ActiveUsersEntry {
+          {
+            platform = k;
+            users = v;
+          }
+        });
+    }
+  };
+
+  // Daily Active Users
+  public func reportDailyUse(args : ReportPeriodicUseArgs) : async () {
+    updateAggregationPeriods();
+    data.dailyActiveUsers := reportActiveUser(
+      data.dailyActiveUsers,
+      data.dailyAggregationPeriodStart,
+      args.platform);
+    data.dailyActiveUsersByVersion := reportActiveUserByVersion(
+      data.dailyActiveUsersByVersion,
+      data.dailyAggregationPeriodStart,
+      args.dfxVersion,
+      args.platform);
+  };
+
+  public query func getDailyActiveUsersReportingPeriods(
+  ) : async [AggregationPeriodStart] {
+    getActiveUsersReportingPeriods(data.dailyActiveUsers)
+  };
+
+  public query func getDailyUsers(
+    aggregationPeriod: AggregationPeriodStart
+  ) : async [ActiveUsersEntry] {
+    getActiveUsers(data.dailyActiveUsers, aggregationPeriod)
   };
 
   // todo: access control https://dfinity.atlassian.net/browse/SDK-864
