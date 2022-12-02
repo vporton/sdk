@@ -36,15 +36,16 @@ actor {
   type Platform = Platform.Platform;
   type ReportPeriodicUseArgs = Interface.ReportPeriodicUseArgs;
   type ReportCommandArgs = Interface.ReportCommandArgs;
-  type V0 = Data.V0;
-  type V1 = Data.V1;
+  //type V0 = Data.V0;
+  //type V1 = Data.V1;
+  type V2 = Data.V2;
 
   let nsPerDay = 86_400 * 1000_000_000;
   let nsPer30Days = 30 * nsPerDay;
 
-  stable var versioned : Data.Versioned = #v1(Data.new());
+  stable var versioned : Data.Versioned = #v2(Data.new());
   var data : Data.Data = switch (versioned) {
-    case (#v1 v1) v1;
+    case (#v2 v2) v2;
     case (_) Data.new();
   };
 
@@ -54,7 +55,11 @@ actor {
         data := Data.fromV0(v0);
         versioned := #v1(data);
       };
-      case (#v1 v1) {};
+      case (#v1 v1) {
+        data := Data.fromV1(v1);
+        versioned := #v2(data);
+      };
+      case (#v2 v2) {};
     };
   };
 
@@ -339,6 +344,27 @@ actor {
   ) : async [ActiveUsersEntry] {
     getActiveUsers(data.dailyActiveUsers, aggregationPeriod)
   };
+
+  // Monthly Active Users
+  public func reportMonthlyUse(args : ReportPeriodicUseArgs) : async () {
+    updateAggregationPeriods();
+    data.monthlyActiveUsers := reportActiveUser(
+      data.monthlyActiveUsers,
+      data.thirtyDayAggregationPeriodStart,
+      args.platform);
+  };
+
+  public query func getMonthlyActiveUsersReportingPeriods(
+  ) : async [AggregationPeriodStart] {
+    getActiveUsersReportingPeriods(data.monthlyActiveUsers)
+  };
+
+  public query func getMonthlyUsers(
+    aggregationPeriod: AggregationPeriodStart
+  ) : async [ActiveUsersEntry] {
+    getActiveUsers(data.monthlyActiveUsers, aggregationPeriod)
+  };
+
 
   // todo: access control https://dfinity.atlassian.net/browse/SDK-864
   public query func testGetCommandResults(

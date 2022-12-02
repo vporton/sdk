@@ -38,12 +38,28 @@ module Data {
     var overrideTime : ?Time;
   };
 
-  public type Data = V1;
+  public type V2 = {
+    var dailyAggregationPeriodStart : Time;
+    var dailyAggregationPeriodEnd : Time;
+
+    var thirtyDayAggregationPeriodStart : Time;
+    var thirtyDayAggregationPeriodEnd : Time;
+
+    var commandResults : CommandResults;
+
+    var dailyActiveUsers : ActiveUsers;
+    var dailyActiveUsersByVersion : ActiveUsersByVersion;
+    var monthlyActiveUsers : ActiveUsers;
+
+    var overrideTime : ?Time;
+  };
+
+  public type Data = V2;
   public type Versioned = {
     #v0 : V0;
     #v1 : V1;
+    #v2 : V2;
   };
-
 
   public func new() : Data {
     {
@@ -57,6 +73,8 @@ module Data {
 
       var dailyActiveUsers = Trie.empty();
       var dailyActiveUsersByVersion = Trie.empty();
+
+      var monthlyActiveUsers = Trie.empty();
 
       var overrideTime = null;
     }
@@ -74,6 +92,27 @@ module Data {
 
       var dailyActiveUsers = Trie.empty();
       var dailyActiveUsersByVersion = Trie.empty();
+
+      var monthlyActiveUsers = Trie.empty();
+
+      var overrideTime = prev.overrideTime;
+    }
+  };
+
+  public func fromV1(prev: V1) : Data {
+    {
+      var dailyAggregationPeriodStart = prev.dailyAggregationPeriodStart;
+      var dailyAggregationPeriodEnd = prev.dailyAggregationPeriodEnd;
+
+      var thirtyDayAggregationPeriodStart = prev.thirtyDayAggregationPeriodStart;
+      var thirtyDayAggregationPeriodEnd = prev.thirtyDayAggregationPeriodEnd;
+
+      var commandResults = prev.commandResults;
+
+      var dailyActiveUsers = prev.dailyActiveUsers;
+      var dailyActiveUsersByVersion = prev.dailyActiveUsersByVersion;
+
+      var monthlyActiveUsers = Trie.empty();
 
       var overrideTime = prev.overrideTime;
     }

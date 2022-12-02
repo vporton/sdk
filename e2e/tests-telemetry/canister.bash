@@ -85,6 +85,22 @@ getDailyUsers() {
     dfx canister call telemetry_backend getDailyUsers "($reportingPeriod)"
 }
 
+reportMonthlyUse() {
+    dfxVersion="$1"
+    platform="$2"
+
+    dfx canister call telemetry_backend reportMonthlyUse '(record { dfxVersion = "'"$dfxVersion"'"; platform=variant {'"$platform"'};})'
+}
+
+getMonthlyActiveUsersReportingPeriods() {
+    dfx canister call telemetry_backend getMonthlyActiveUsersReportingPeriods
+}
+
+getMonthlyUsers() {
+    reportingPeriod="$(timestamp "$@")"
+    dfx canister call telemetry_backend getMonthlyUsers "($reportingPeriod)"
+}
+
 @test "stores success rates by command" {
     dfx_start
     dfx deploy
@@ -251,3 +267,50 @@ getDailyUsers() {
     assert_contains 'record { platform = variant { linux }; users = 2 : nat };'
 }
 
+@test 'stores monthly users' {
+    dfx_start
+    dfx deploy
+
+    setTime 0 2
+    reportMonthlyUse 0.12.1 linux
+    setTime 0 7
+    reportMonthlyUse 0.12.1 linux
+    assert_command getMonthlyActiveUsersReportingPeriods
+    assert_eq "(vec { 1_668_556_800_000_000_000 : int })"
+
+    setTime 35 1
+    reportMonthlyUse 0.12.1 darwin
+    setTime 37 8
+    reportMonthlyUse 0.12.1 darwin
+    setTime 42  17
+    reportMonthlyUse 0.12.1 darwin
+    assert_command getMonthlyActiveUsersReportingPeriods
+    assert_contains '1_668_556_800_000_000_000'
+    assert_contains '1_671_148_800_000_000_000'
+
+    setTime 61 0 5
+    reportMonthlyUse 0.12.1 darwin
+    setTime 72 2
+    reportMonthlyUse 0.12.1 linux
+    setTime 83 7
+    reportMonthlyUse 0.12.1 linux
+    assert_command getMonthlyActiveUsersReportingPeriods
+    assert_contains '1_668_556_800_000_000_000'
+    assert_contains '1_671_148_800_000_000_000'
+    assert_contains '1_673_740_800_000_000_000'
+
+    assert_command getMonthlyUsers 0
+    assert_contains "platform = variant { linux }"
+    assert_contains "users = 2 : nat"
+    assert_contains 'record { platform = variant { linux }; users = 2 : nat }'
+
+
+    assert_command getMonthlyUsers 30
+    assert_contains "platform = variant { darwin }"
+    assert_contains "users = 3 : nat"
+    assert_contains 'record { platform = variant { darwin }; users = 3 : nat }'
+
+    assert_command getMonthlyUsers 60
+    assert_contains 'record { platform = variant { darwin }; users = 1 : nat };'
+    assert_contains 'record { platform = variant { linux }; users = 2 : nat };'
+}
