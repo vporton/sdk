@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - master
+      - ericswanson/diagnose-ci-failure
   pull_request:
 
 concurrency:
