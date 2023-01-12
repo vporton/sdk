@@ -3,12 +3,22 @@
 use crate::config::{dfx_version, dfx_version_str};
 use crate::lib::environment::{Environment, EnvironmentImpl};
 use crate::lib::logger::{create_root_logger, LoggingMode};
+use std::mem;
 
 use anyhow::Error;
 use clap::{Args, Parser};
+use dfx_core::error::encryption::EncryptionError;
+use dfx_core::error::identity::IdentityError;
+use dfx_core::error::io::{IoError, IoErrorKind};
+use dfx_core::error::keyring::KeyringError;
+use dfx_core::error::structured_file::StructuredFileError;
+use dfx_core::error::wallet_config::WalletConfigError;
+use ic_identity_hsm::HardwareIdentityError;
 use lib::diagnosis::{diagnose, Diagnosis, NULL_DIAGNOSIS};
+use pem::PemError;
 use semver::Version;
 use std::path::PathBuf;
+use std::string::FromUtf8Error;
 
 mod actors;
 mod commands;
@@ -178,6 +188,42 @@ fn print_error_and_diagnosis(err: Error, error_diagnosis: Diagnosis) {
 }
 
 fn main() {
+    println!("IdentityError size: {}", mem::size_of::<IdentityError>());
+    println!("PemError size: {}", mem::size_of::<PemError>());
+    println!("IoError size: {}", mem::size_of::<IoError>());
+    println!("IoErrorKind size: {}", mem::size_of::<IoErrorKind>());
+    println!(
+        "StructuredFileError size: {}",
+        mem::size_of::<StructuredFileError>()
+    );
+    println!(
+        "EncryptionError size: {}",
+        mem::size_of::<EncryptionError>()
+    );
+    println!("KeyringError size: {}", mem::size_of::<KeyringError>());
+    println!(
+        "WalletConfigError size: {}",
+        mem::size_of::<WalletConfigError>()
+    );
+    println!("FromUtf8Error size: {}", mem::size_of::<FromUtf8Error>());
+    println!("bip32::Error size: {}", mem::size_of::<bip32::Error>());
+    println!(
+        "HardwareIdentityError size: {}",
+        mem::size_of::<HardwareIdentityError>()
+    );
+    println!("PathBuf size: {}", mem::size_of::<PathBuf>());
+    println!("keyring::Error size: {}", mem::size_of::<keyring::Error>());
+    println!("Box size: {}", mem::size_of::<Box<IdentityError>>());
+    println!(
+        "std::io::Error size: {}",
+        mem::size_of::<Box<std::io::Error>>()
+    );
+    println!(
+        "serde_json::Error size: {}",
+        mem::size_of::<serde_json::Error>()
+    );
+    //println!("IdentityError2 size: {}", mem::size_of::<IdentityError2>());
+
     let cli_opts = CliOpts::parse();
     let (verbose_level, log) = setup_logging(&cli_opts);
     let identity = cli_opts.identity;
