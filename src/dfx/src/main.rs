@@ -206,7 +206,6 @@ fn main() {
         mem::size_of::<WalletConfigError>()
     );
     println!("FromUtf8Error size: {}", mem::size_of::<FromUtf8Error>());
-    println!("bip32::Error size: {}", mem::size_of::<bip32::Error>());
     println!(
         "HardwareIdentityError size: {}",
         mem::size_of::<HardwareIdentityError>()
