@@ -66,14 +66,14 @@ pub struct EncodedAsset {
     pub sha256: Option<ByteBuf>,
 }
 
-#[derive(Clone, Debug, CandidType, Deserialize)]
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
 pub struct AssetDetails {
     pub key: String,
     pub content_type: String,
     pub encodings: Vec<AssetEncodingDetails>,
 }
 
-#[derive(Clone, Debug, CandidType, Deserialize)]
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
 pub struct AssetEncodingDetails {
     pub content_encoding: String,
     pub sha256: Option<ByteBuf>,
@@ -196,6 +196,7 @@ impl State {
         arg: SetAssetContentArguments,
         now: u64,
     ) -> Result<(), String> {
+        ic_cdk::print(format!("setting asset content for {}", &arg.key));
         if arg.chunk_ids.is_empty() {
             return Err("encoding must have at least one chunk".to_string());
         }
@@ -258,6 +259,7 @@ impl State {
     }
 
     pub fn delete_asset(&mut self, arg: DeleteAssetArguments) {
+        ic_cdk::print(format!("deleting {}", &arg.key));
         for dependent in self.dependent_keys(&arg.key) {
             self.asset_hashes.delete(dependent.as_bytes());
         }
@@ -293,6 +295,7 @@ impl State {
     }
 
     pub fn store(&mut self, arg: StoreArg, time: u64) -> Result<(), String> {
+        ic_cdk::print(format!("storing {}", &arg.key));
         let dependent_keys = self.dependent_keys(&arg.key);
         let asset = self.assets.entry(arg.key.clone()).or_default();
         asset.content_type = arg.content_type;
@@ -630,6 +633,7 @@ impl State {
     }
 
     pub fn set_asset_properties(&mut self, arg: SetAssetPropertiesArguments) -> Result<(), String> {
+        ic_cdk::print(format!("setting asset properties for {}", &arg.key));
         let asset = self
             .assets
             .get_mut(&arg.key)

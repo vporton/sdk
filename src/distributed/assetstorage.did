@@ -160,4 +160,6 @@ service: {
     headers: opt vec HeaderField;
     allow_raw_access: opt bool; } ) query;
   set_asset_properties: (SetAssetPropertiesArguments) -> ();
+
+  sync_with: (principal) -> (text);
 }

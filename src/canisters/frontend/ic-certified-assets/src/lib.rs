@@ -23,6 +23,7 @@ use ic_cdk::api::{
     set_certified_data, time, trap,
 };
 use ic_cdk_macros::{query, update};
+use serde_bytes::ByteBuf;
 use std::cell::RefCell;
 
 thread_local! {
@@ -244,6 +245,64 @@ fn set_asset_properties(arg: SetAssetPropertiesArguments) {
             trap(&msg);
         }
     })
+}
+
+#[update]
+#[candid_method(update)]
+async fn sync_with(source: Principal) -> String {
+    let (source_assets,): (Vec<AssetDetails>,) = ic_cdk::call(source, "list", ((),)).await.unwrap();
+    ic_cdk::print(format!("fetched details: {:?}", &source_assets));
+    let my_assets = STATE.with(|s| s.borrow().list_assets());
+    let assets_to_delete: Vec<&AssetDetails> = my_assets
+        .iter()
+        .filter(|my| !source_assets.iter().any(|a| a.key == my.key))
+        .collect();
+    let assets_to_sync: Vec<&AssetDetails> = source_assets
+        .iter()
+        .filter(|src| !my_assets.iter().any(|my: &AssetDetails| **src == *my))
+        .collect();
+    ic_cdk::print(format!("assets to sync: {:?}", &assets_to_sync));
+    ic_cdk::print(format!("assets to delete: {:?}", &assets_to_delete));
+
+    for asset in assets_to_delete {
+        STATE.with(|s| {
+            s.borrow_mut().delete_asset(DeleteAssetArguments {
+                key: asset.key.clone(),
+            })
+        });
+    }
+
+    for asset in assets_to_sync {
+        let (data,): (EncodedAsset,) = ic_cdk::call(
+            source,
+            "get",
+            (GetArg {
+                key: asset.key.clone(),
+                accept_encodings: vec!["identity".to_string()],
+            },),
+        )
+        .await
+        .unwrap();
+
+        STATE.with(|s| {
+            let mut state = s.borrow_mut();
+            let content: Vec<u8> = data.content.iter().map(|b| b.clone()).collect();
+            state
+                .store(
+                    StoreArg {
+                        key: asset.key.clone(),
+                        content_type: data.content_type,
+                        content_encoding: "identity".to_string(),
+                        content: ByteBuf::from(content),
+                        sha256: data.sha256,
+                        aliased: None,
+                    },
+                    6,
+                )
+                .unwrap();
+        });
+    }
+    "Ok".to_string()
 }
 
 fn is_authorized() -> Result<(), String> {
