@@ -2,14 +2,15 @@ use crate::asset_canister::protocol::AssetDetails;
 use crate::asset_config::AssetConfig;
 use crate::content::Content;
 use crate::content_encoder::ContentEncoder;
-use crate::params::CanisterCallParams;
 
 use crate::asset_canister::chunk::create_chunk;
 use crate::semaphores::Semaphores;
 use candid::Nat;
 use futures::future::try_join_all;
 use futures::TryFutureExt;
+use ic_utils::Canister;
 use mime::Mime;
+use slog::{debug, info, Logger};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -42,13 +43,14 @@ pub(crate) struct ProjectAsset {
 
 #[allow(clippy::too_many_arguments)]
 async fn make_project_asset_encoding(
-    canister_call_params: &CanisterCallParams<'_>,
+    canister: &Canister<'_>,
     batch_id: &Nat,
     asset_descriptor: &AssetDescriptor,
     container_assets: &HashMap<String, AssetDetails>,
     content: &Content,
     content_encoding: &str,
     semaphores: &Semaphores,
+    logger: &Logger,
 ) -> anyhow::Result<ProjectAssetEncoding> {
     let sha256 = content.sha256();
 
@@ -71,7 +73,8 @@ async fn make_project_asset_encoding(
         };
 
     let chunk_ids = if already_in_place {
-        println!(
+        info!(
+            logger,
             "  {}{} ({} bytes) sha {} is already installed",
             &asset_descriptor.key,
             content_encoding_descriptive_suffix(content_encoding),
@@ -81,13 +84,14 @@ async fn make_project_asset_encoding(
         vec![]
     } else {
         upload_content_chunks(
-            canister_call_params,
+            canister,
             batch_id,
             asset_descriptor,
             content,
             &sha256,
             content_encoding,
             semaphores,
+            logger,
         )
         .await?
     };
@@ -101,24 +105,26 @@ async fn make_project_asset_encoding(
 
 #[allow(clippy::too_many_arguments)]
 async fn make_encoding(
-    canister_call_params: &CanisterCallParams<'_>,
+    canister: &Canister<'_>,
     batch_id: &Nat,
     asset_descriptor: &AssetDescriptor,
     container_assets: &HashMap<String, AssetDetails>,
     content: &Content,
     encoder: &Option<ContentEncoder>,
     semaphores: &Semaphores,
+    logger: &Logger,
 ) -> anyhow::Result<Option<(String, ProjectAssetEncoding)>> {
     match encoder {
         None => {
             let identity_asset_encoding = make_project_asset_encoding(
-                canister_call_params,
+                canister,
                 batch_id,
                 asset_descriptor,
                 container_assets,
                 content,
                 CONTENT_ENCODING_IDENTITY,
                 semaphores,
+                logger,
             )
             .await?;
             Ok(Some((
@@ -131,13 +137,14 @@ async fn make_encoding(
             if encoded.data.len() < content.data.len() {
                 let content_encoding = format!("{}", encoder);
                 let project_asset_encoding = make_project_asset_encoding(
-                    canister_call_params,
+                    canister,
                     batch_id,
                     asset_descriptor,
                     container_assets,
                     &encoded,
                     &content_encoding,
                     semaphores,
+                    logger,
                 )
                 .await?;
                 Ok(Some((content_encoding, project_asset_encoding)))
@@ -149,12 +156,13 @@ async fn make_encoding(
 }
 
 async fn make_encodings(
-    canister_call_params: &CanisterCallParams<'_>,
+    canister: &Canister<'_>,
     batch_id: &Nat,
     asset_descriptor: &AssetDescriptor,
     container_assets: &HashMap<String, AssetDetails>,
     content: &Content,
     semaphores: &Semaphores,
+    logger: &Logger,
 ) -> anyhow::Result<HashMap<String, ProjectAssetEncoding>> {
     let mut encoders = vec![None];
     for encoder in applicable_encoders(&content.media_type) {
@@ -165,13 +173,14 @@ async fn make_encodings(
         .iter()
         .map(|maybe_encoder| {
             make_encoding(
-                canister_call_params,
+                canister,
                 batch_id,
                 asset_descriptor,
                 container_assets,
                 content,
                 maybe_encoder,
                 semaphores,
+                logger,
             )
         })
         .collect();
@@ -187,11 +196,12 @@ async fn make_encodings(
 }
 
 async fn make_project_asset(
-    canister_call_params: &CanisterCallParams<'_>,
+    canister: &Canister<'_>,
     batch_id: &Nat,
     asset_descriptor: AssetDescriptor,
     container_assets: &HashMap<String, AssetDetails>,
     semaphores: &Semaphores,
+    logger: &Logger,
 ) -> anyhow::Result<ProjectAsset> {
     let file_size = std::fs::metadata(&asset_descriptor.source)?.len();
     let permits = std::cmp::max(
@@ -205,12 +215,13 @@ async fn make_project_asset(
     let content = Content::load(&asset_descriptor.source)?;
 
     let encodings = make_encodings(
-        canister_call_params,
+        canister,
         batch_id,
         &asset_descriptor,
         container_assets,
         &content,
         semaphores,
+        logger,
     )
     .await?;
 
@@ -222,10 +233,11 @@ async fn make_project_asset(
 }
 
 pub(crate) async fn make_project_assets(
-    canister_call_params: &CanisterCallParams<'_>,
+    canister: &Canister<'_>,
     batch_id: &Nat,
     asset_descriptors: Vec<AssetDescriptor>,
     container_assets: &HashMap<String, AssetDetails>,
+    logger: &Logger,
 ) -> anyhow::Result<HashMap<String, ProjectAsset>> {
     let semaphores = Semaphores::new();
 
@@ -233,11 +245,12 @@ pub(crate) async fn make_project_assets(
         .iter()
         .map(|loc| {
             make_project_asset(
-                canister_call_params,
+                canister,
                 batch_id,
                 loc.clone(),
                 container_assets,
                 &semaphores,
+                logger,
             )
         })
         .collect();
@@ -251,22 +264,24 @@ pub(crate) async fn make_project_assets(
 }
 
 async fn upload_content_chunks(
-    canister_call_params: &CanisterCallParams<'_>,
+    canister: &Canister<'_>,
     batch_id: &Nat,
     asset_descriptor: &AssetDescriptor,
     content: &Content,
     sha256: &Vec<u8>,
     content_encoding: &str,
     semaphores: &Semaphores,
+    logger: &Logger,
 ) -> anyhow::Result<Vec<Nat>> {
     if content.data.is_empty() {
         let empty = vec![];
-        let chunk_id = create_chunk(canister_call_params, batch_id, &empty, semaphores).await?;
-        println!(
+        let chunk_id = create_chunk(canister, batch_id, &empty, semaphores).await?;
+        info!(
+            logger,
             "  {}{} 1/1 (0 bytes) sha {}",
             &asset_descriptor.key,
             content_encoding_descriptive_suffix(content_encoding),
-            hex::encode(&sha256)
+            hex::encode(sha256)
         );
         return Ok(vec![chunk_id]);
     }
@@ -277,20 +292,22 @@ async fn upload_content_chunks(
         .chunks(MAX_CHUNK_SIZE)
         .enumerate()
         .map(|(i, data_chunk)| {
-            create_chunk(canister_call_params, batch_id, data_chunk, semaphores).map_ok(
-                move |chunk_id| {
-                    println!(
-                        "  {}{} {}/{} ({} bytes) sha {}",
-                        &asset_descriptor.key,
-                        content_encoding_descriptive_suffix(content_encoding),
-                        i + 1,
-                        count,
-                        data_chunk.len(),
-                        hex::encode(&sha256)
-                    );
-                    chunk_id
-                },
-            )
+            create_chunk(canister, batch_id, data_chunk, semaphores).map_ok(move |chunk_id| {
+                info!(
+                    logger,
+                    "  {}{} {}/{} ({} bytes) sha {} {}",
+                    &asset_descriptor.key,
+                    content_encoding_descriptive_suffix(content_encoding),
+                    i + 1,
+                    count,
+                    data_chunk.len(),
+                    hex::encode(sha256),
+                    &asset_descriptor.config
+                );
+                debug!(logger, "{:?}", &asset_descriptor.config);
+
+                chunk_id
+            })
         })
         .collect();
     try_join_all(chunks_futures).await

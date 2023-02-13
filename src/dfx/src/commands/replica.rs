@@ -6,13 +6,13 @@ use crate::commands::start::{
     apply_command_line_parameters, configure_btc_adapter_if_enabled,
     configure_canister_http_adapter_if_enabled, empty_writable_path,
 };
-use crate::config::dfinity::DEFAULT_REPLICA_PORT;
 use crate::lib::environment::Environment;
 use crate::lib::error::DfxResult;
 use crate::lib::network::id::write_network_id;
 use crate::lib::network::local_server_descriptor::LocalServerDescriptor;
 use crate::lib::provider::{create_network_descriptor, LocalBindDetermination};
 use crate::lib::replica_config::{HttpHandlerConfig, ReplicaConfig};
+use dfx_core::config::model::dfinity::DEFAULT_REPLICA_PORT;
 
 use anyhow::Context;
 use clap::Parser;
@@ -109,7 +109,7 @@ pub fn exec(
     local_server_descriptor.describe(env.get_logger(), true, true);
 
     let temp_dir = &local_server_descriptor.data_directory;
-    create_dir_all(&temp_dir).with_context(|| {
+    create_dir_all(temp_dir).with_context(|| {
         format!(
             "Failed to create network temp directory {}.",
             temp_dir.to_string_lossy()

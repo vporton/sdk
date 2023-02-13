@@ -13,14 +13,13 @@ use crate::lib::network::local_server_descriptor::LocalServerDescriptor;
 use crate::lib::network::network_descriptor::NetworkDescriptor;
 use crate::lib::provider::{create_network_descriptor, LocalBindDetermination};
 use crate::lib::replica_config::ReplicaConfig;
-use crate::lib::{bitcoin, canister_http};
 use crate::util::get_reusable_socket_addr;
+use dfx_core::config::model::{bitcoin_adapter, canister_http_adapter};
 
 use actix::Recipient;
 use anyhow::{anyhow, bail, Context, Error};
 use clap::Parser;
 use fn_error_context::context;
-use garcon::{Delay, Waiter};
 use os_str_bytes::{OsStrBytes, OsStringBytes};
 use slog::{info, warn, Logger};
 use std::fs;
@@ -29,7 +28,7 @@ use std::io::Read;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use sysinfo::{Pid, System, SystemExt};
 use tokio::runtime::Runtime;
 
@@ -78,14 +77,10 @@ fn ping_and_wait(frontend_url: &str) -> DfxResult {
 // webserver_port_path to get written to and modify the frontend_url so we
 // ping the correct address.
 fn fg_ping_and_wait(webserver_port_path: PathBuf, frontend_url: String) -> DfxResult {
-    let mut waiter = Delay::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .throttle(std::time::Duration::from_secs(1))
-        .build();
     let runtime = Runtime::new().expect("Unable to create a runtime");
     let port = runtime
         .block_on(async {
-            waiter.start();
+            let mut retries = 0;
             let mut contents = String::new();
             loop {
                 let tokio_file = tokio::fs::File::open(&webserver_port_path)
@@ -100,7 +95,11 @@ fn fg_ping_and_wait(webserver_port_path: PathBuf, frontend_url: String) -> DfxRe
                 if !contents.is_empty() {
                     break;
                 }
-                waiter.wait().map_err(|err| anyhow!("{:?}", err))?;
+                if retries >= 30 {
+                    bail!("Timed out waiting for replica to become healthy");
+                }
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                retries += 1;
             }
             Ok::<String, DfxError>(contents.clone())
         })
@@ -489,7 +488,7 @@ fn check_previous_process_running(
 
 fn write_pid(pid_file_path: &Path) {
     if let Ok(pid) = sysinfo::get_current_pid() {
-        let _ = std::fs::write(&pid_file_path, pid.to_string());
+        let _ = std::fs::write(pid_file_path, pid.to_string());
     }
 }
 
@@ -498,7 +497,7 @@ pub fn configure_btc_adapter_if_enabled(
     local_server_descriptor: &LocalServerDescriptor,
     config_path: &Path,
     uds_holder_path: &Path,
-) -> DfxResult<Option<bitcoin::adapter::Config>> {
+) -> DfxResult<Option<bitcoin_adapter::Config>> {
     if !local_server_descriptor.bitcoin.enabled {
         return Ok(None);
     };
@@ -508,7 +507,7 @@ pub fn configure_btc_adapter_if_enabled(
     let nodes = if let Some(ref nodes) = local_server_descriptor.bitcoin.nodes {
         nodes.clone()
     } else {
-        bitcoin::adapter::config::default_nodes()
+        bitcoin_adapter::default_nodes()
     };
 
     let config = write_btc_adapter_config(uds_holder_path, config_path, nodes, log_level)?;
@@ -551,11 +550,11 @@ fn write_btc_adapter_config(
     uds_holder_path: &Path,
     config_path: &Path,
     nodes: Vec<SocketAddr>,
-    log_level: bitcoin::adapter::config::BitcoinAdapterLogLevel,
-) -> DfxResult<bitcoin::adapter::Config> {
+    log_level: bitcoin_adapter::BitcoinAdapterLogLevel,
+) -> DfxResult<bitcoin_adapter::Config> {
     let socket_path = get_persistent_socket_path(uds_holder_path, "ic-btc-adapter-socket")?;
 
-    let adapter_config = bitcoin::adapter::Config::new(nodes, socket_path, log_level);
+    let adapter_config = bitcoin_adapter::Config::new(nodes, socket_path, log_level);
 
     let contents = serde_json::to_string_pretty(&adapter_config)
         .context("Unable to serialize btc adapter configuration to json")?;
@@ -580,7 +579,7 @@ pub fn configure_canister_http_adapter_if_enabled(
     local_server_descriptor: &LocalServerDescriptor,
     config_path: &Path,
     uds_holder_path: &Path,
-) -> DfxResult<Option<canister_http::adapter::Config>> {
+) -> DfxResult<Option<canister_http_adapter::Config>> {
     if !local_server_descriptor.canister_http.enabled {
         return Ok(None);
     };
@@ -589,7 +588,7 @@ pub fn configure_canister_http_adapter_if_enabled(
         get_persistent_socket_path(uds_holder_path, "ic-canister-http-adapter-socket")?;
 
     let log_level = local_server_descriptor.canister_http.log_level;
-    let adapter_config = canister_http::adapter::Config::new(socket_path, log_level);
+    let adapter_config = canister_http_adapter::Config::new(socket_path, log_level);
 
     let contents = serde_json::to_string_pretty(&adapter_config)
         .context("Unable to serialize canister http adapter configuration to json")?;

@@ -72,6 +72,10 @@ pub struct CreateAssetArguments {
     pub max_age: Option<u64>,
     /// The HTTP headers
     pub headers: Option<HeadersConfig>,
+    /// Aliasing enabled or not
+    pub enable_aliasing: Option<bool>,
+    /// When set to true, don't redirect from raw to certified
+    pub allow_raw_access: Option<bool>,
 }
 
 /// Set the data for a particular content encoding for the given asset.
@@ -129,9 +133,9 @@ pub enum BatchOperationKind {
 
 /// Apply all of the operations in the batch, and then remove the batch.
 #[derive(CandidType, Debug)]
-pub struct CommitBatchArguments<'a> {
+pub struct CommitBatchArguments {
     /// The batch to commit.
-    pub batch_id: &'a Nat,
+    pub batch_id: Nat,
 
     /// The operations to apply atomically.
     pub operations: Vec<BatchOperationKind>,

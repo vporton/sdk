@@ -79,8 +79,13 @@ impl CanisterBuilder for RustBuilder {
         let dependencies = self
             .get_dependencies(pool, canister_info)
             .unwrap_or_default();
-        let vars =
-            super::environment_variables(canister_info, &config.network_name, pool, &dependencies);
+        let vars = super::get_and_write_environment_variables(
+            canister_info,
+            &config.network_name,
+            pool,
+            &dependencies,
+            config.env_file.as_deref(),
+        )?;
         for (key, val) in vars {
             cargo.env(key.as_ref(), val);
         }
@@ -92,7 +97,8 @@ impl CanisterBuilder for RustBuilder {
         );
         let output = cargo.output().context("Failed to run 'cargo build'. You might need to run `cargo update` (or a similar command like `cargo vendor`) if you have updated `Cargo.toml`, because `dfx build` uses the --locked flag with Cargo.")?;
 
-        if canister_info.get_shrink() {
+        let shrink = canister_info.get_shrink().unwrap_or(true);
+        if shrink {
             info!(self.logger, "Shrink WASM module size.");
             super::shrink_wasm(rust_info.get_output_wasm_path())?;
         }

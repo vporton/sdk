@@ -1,19 +1,19 @@
-use crate::config::dfinity::NetworkType;
-use crate::config::dfinity::{DEFAULT_IC_GATEWAY, DEFAULT_IC_GATEWAY_TRAILING_SLASH};
 use crate::lib::error::DfxResult;
 use crate::lib::network::local_server_descriptor::LocalServerDescriptor;
+use dfx_core::config::model::dfinity::NetworkType;
+use dfx_core::config::model::dfinity::{DEFAULT_IC_GATEWAY, DEFAULT_IC_GATEWAY_TRAILING_SLASH};
 
 use anyhow::bail;
 use std::path::{Path, PathBuf};
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NetworkTypeDescriptor {
     Ephemeral { wallet_config_path: PathBuf },
 
     Persistent,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NetworkDescriptor {
     pub name: String,
     pub providers: Vec<String>,

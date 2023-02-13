@@ -1,22 +1,21 @@
 use crate::asset_canister::batch::{commit_batch, create_batch};
 use crate::asset_canister::list::list_assets;
-use crate::asset_canister::protocol::{AssetDetails, BatchOperationKind};
+use crate::asset_canister::protocol::{AssetDetails, BatchOperationKind, CommitBatchArguments};
 use crate::asset_config::AssetConfig;
 use crate::operations::{
     create_new_assets, delete_incompatible_assets, set_encodings, unset_obsolete_encodings,
 };
-use crate::params::CanisterCallParams;
 use crate::plumbing::{make_project_assets, AssetDescriptor, ProjectAsset};
 use ic_utils::Canister;
+use slog::{info, Logger};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::time::Duration;
 
 /// Upload the specified files
 pub async fn upload(
     canister: &Canister<'_>,
-    timeout: Duration,
     files: HashMap<String, PathBuf>,
+    logger: &Logger,
 ) -> anyhow::Result<()> {
     let asset_descriptors: Vec<AssetDescriptor> = files
         .iter()
@@ -27,29 +26,33 @@ pub async fn upload(
         })
         .collect();
 
-    let canister_call_params = CanisterCallParams { canister, timeout };
+    let container_assets = list_assets(canister).await?;
 
-    let container_assets = list_assets(&canister_call_params).await?;
+    info!(logger, "Starting batch.");
 
-    println!("Starting batch.");
+    let batch_id = create_batch(canister).await?;
 
-    let batch_id = create_batch(&canister_call_params).await?;
-
-    println!("Staging contents of new and changed assets:");
+    info!(logger, "Staging contents of new and changed assets:");
 
     let project_assets = make_project_assets(
-        &canister_call_params,
+        canister,
         &batch_id,
         asset_descriptors,
         &container_assets,
+        logger,
     )
     .await?;
 
     let operations = assemble_upload_operations(project_assets, container_assets);
 
-    println!("Committing batch.");
+    info!(logger, "Committing batch.");
 
-    commit_batch(&canister_call_params, &batch_id, operations).await?;
+    let args = CommitBatchArguments {
+        batch_id,
+        operations,
+    };
+
+    commit_batch(canister, args).await?;
 
     Ok(())
 }

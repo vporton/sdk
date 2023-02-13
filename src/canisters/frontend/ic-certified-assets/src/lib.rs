@@ -1,4 +1,5 @@
 //! This module declares canister methods expected by the assets canister client.
+pub mod http;
 pub mod rc_bytes;
 pub mod state_machine;
 pub mod types;
@@ -9,12 +10,18 @@ mod tests;
 
 pub use crate::state_machine::StableState;
 use crate::{
+    http::{HttpRequest, HttpResponse, StreamingCallbackHttpResponse, StreamingCallbackToken},
     rc_bytes::RcBytes,
     state_machine::{AssetDetails, CertifiedTree, EncodedAsset, State},
     types::*,
 };
 use candid::{candid_method, Principal};
-use ic_cdk::api::{caller, data_certificate, set_certified_data, time, trap};
+use ic_cdk::api::{
+    call::ManualReply,
+    caller, data_certificate,
+    management_canister::{main::canister_status, provisional::CanisterIdRecord},
+    set_certified_data, time, trap,
+};
 use ic_cdk_macros::{query, update};
 use std::cell::RefCell;
 
@@ -24,13 +31,96 @@ thread_local! {
 
 #[update]
 #[candid_method(update)]
-fn authorize(other: Principal) {
+async fn authorize(other: Principal) {
+    match has_permission_or_is_controller(&Permission::ManagePermissions).await {
+        Err(e) => trap(&e),
+        Ok(_) => STATE.with(|s| s.borrow_mut().grant_permission(other, &Permission::Commit)),
+    }
+}
+
+#[update]
+#[candid_method(update)]
+async fn grant_permission(arg: GrantPermissionArguments) {
+    match has_permission_or_is_controller(&Permission::ManagePermissions).await {
+        Err(e) => trap(&e),
+        Ok(_) => STATE.with(|s| {
+            s.borrow_mut()
+                .grant_permission(arg.to_principal, &arg.permission)
+        }),
+    }
+}
+
+#[update]
+#[candid_method(update)]
+async fn validate_grant_permission(arg: GrantPermissionArguments) -> Result<String, String> {
+    Ok(format!(
+        "grant {} permission to principal {}",
+        arg.permission, arg.to_principal
+    ))
+}
+
+#[update]
+#[candid_method(update)]
+async fn deauthorize(other: Principal) {
+    let check_access_result = if other == caller() {
+        // this isn't "ManagePermissions" because these legacy methods only
+        // deal with the Commit permission
+        has_permission_or_is_controller(&Permission::Commit).await
+    } else {
+        is_controller().await
+    };
+    match check_access_result {
+        Err(e) => trap(&e),
+        Ok(_) => STATE.with(|s| s.borrow_mut().revoke_permission(other, &Permission::Commit)),
+    }
+}
+
+#[update]
+#[candid_method(update)]
+async fn revoke_permission(arg: RevokePermissionArguments) {
+    let check_access_result = if arg.of_principal == caller() {
+        has_permission_or_is_controller(&arg.permission).await
+    } else {
+        has_permission_or_is_controller(&Permission::ManagePermissions).await
+    };
+    match check_access_result {
+        Err(e) => trap(&e),
+        Ok(_) => STATE.with(|s| {
+            s.borrow_mut()
+                .revoke_permission(arg.of_principal, &arg.permission)
+        }),
+    }
+}
+
+#[update]
+#[candid_method(update)]
+async fn validate_revoke_permission(arg: RevokePermissionArguments) -> Result<String, String> {
+    Ok(format!(
+        "revoke {} permission from principal {}",
+        arg.permission, arg.of_principal
+    ))
+}
+
+#[query(manual_reply = true)]
+#[candid_method(query)]
+fn list_authorized() -> ManualReply<Vec<Principal>> {
+    STATE.with(|s| ManualReply::one(s.borrow().list_permitted(&Permission::Commit)))
+}
+
+#[query(manual_reply = true)]
+#[candid_method(query)]
+fn list_permitted(arg: ListPermittedArguments) -> ManualReply<Vec<Principal>> {
+    STATE.with(|s| ManualReply::one(s.borrow().list_permitted(&arg.permission)))
+}
+
+#[update]
+#[candid_method(update)]
+async fn take_ownership() {
     let caller = caller();
-    STATE.with(|s| {
-        if let Err(msg) = s.borrow_mut().authorize(&caller, other) {
-            trap(&msg);
-        }
-    })
+    match is_controller().await {
+        Err(e) => trap(&e),
+        Ok(_) => STATE.with(|s| s.borrow_mut().take_ownership(caller)),
+    }
 }
 
 #[query]
@@ -42,7 +132,7 @@ fn retrieve(key: Key) -> RcBytes {
     })
 }
 
-#[update(guard = "is_authorized")]
+#[update(guard = "can_commit")]
 #[candid_method(update)]
 fn store(arg: StoreArg) {
     STATE.with(move |s| {
@@ -53,7 +143,7 @@ fn store(arg: StoreArg) {
     });
 }
 
-#[update(guard = "is_authorized")]
+#[update(guard = "can_prepare")]
 #[candid_method(update)]
 fn create_batch() -> CreateBatchResponse {
     STATE.with(|s| CreateBatchResponse {
@@ -61,7 +151,7 @@ fn create_batch() -> CreateBatchResponse {
     })
 }
 
-#[update(guard = "is_authorized")]
+#[update(guard = "can_prepare")]
 #[candid_method(update)]
 fn create_chunk(arg: CreateChunkArg) -> CreateChunkResponse {
     STATE.with(|s| match s.borrow_mut().create_chunk(arg, time()) {
@@ -70,7 +160,7 @@ fn create_chunk(arg: CreateChunkArg) -> CreateChunkResponse {
     })
 }
 
-#[update(guard = "is_authorized")]
+#[update(guard = "can_commit")]
 #[candid_method(update)]
 fn create_asset(arg: CreateAssetArguments) {
     STATE.with(|s| {
@@ -81,7 +171,7 @@ fn create_asset(arg: CreateAssetArguments) {
     })
 }
 
-#[update(guard = "is_authorized")]
+#[update(guard = "can_commit")]
 #[candid_method(update)]
 fn set_asset_content(arg: SetAssetContentArguments) {
     STATE.with(|s| {
@@ -92,7 +182,7 @@ fn set_asset_content(arg: SetAssetContentArguments) {
     })
 }
 
-#[update(guard = "is_authorized")]
+#[update(guard = "can_commit")]
 #[candid_method(update)]
 fn unset_asset_content(arg: UnsetAssetContentArguments) {
     STATE.with(|s| {
@@ -103,7 +193,7 @@ fn unset_asset_content(arg: UnsetAssetContentArguments) {
     })
 }
 
-#[update(guard = "is_authorized")]
+#[update(guard = "can_commit")]
 #[candid_method(update)]
 fn delete_asset(arg: DeleteAssetArguments) {
     STATE.with(|s| {
@@ -112,7 +202,7 @@ fn delete_asset(arg: DeleteAssetArguments) {
     });
 }
 
-#[update(guard = "is_authorized")]
+#[update(guard = "can_commit")]
 #[candid_method(update)]
 fn clear() {
     STATE.with(|s| {
@@ -121,7 +211,7 @@ fn clear() {
     });
 }
 
-#[update(guard = "is_authorized")]
+#[update(guard = "can_commit")]
 #[candid_method(update)]
 fn commit_batch(arg: CommitBatchArguments) {
     STATE.with(|s| {
@@ -191,20 +281,96 @@ fn http_request_streaming_callback(token: StreamingCallbackToken) -> StreamingCa
     })
 }
 
-fn is_authorized() -> Result<(), String> {
+#[query]
+#[candid_method(query)]
+fn get_asset_properties(key: Key) -> AssetProperties {
     STATE.with(|s| {
         s.borrow()
-            .is_authorized(&caller())
-            .then(|| ())
-            .ok_or_else(|| "Caller is not authorized".to_string())
+            .get_asset_properties(key)
+            .unwrap_or_else(|msg| trap(&msg))
     })
+}
+
+#[update(guard = "can_commit")]
+#[candid_method(update)]
+fn set_asset_properties(arg: SetAssetPropertiesArguments) {
+    STATE.with(|s| {
+        if let Err(msg) = s.borrow_mut().set_asset_properties(arg) {
+            trap(&msg);
+        }
+    })
+}
+
+fn can(permission: Permission) -> Result<(), String> {
+    STATE.with(|s| {
+        s.borrow()
+            .can(&caller(), &permission)
+            .then_some(())
+            .ok_or_else(|| format!("Caller does not have {} permission", permission))
+    })
+}
+
+fn can_commit() -> Result<(), String> {
+    can(Permission::Commit)
+}
+
+fn can_prepare() -> Result<(), String> {
+    can(Permission::Prepare)
+}
+
+async fn has_permission_or_is_controller(permission: &Permission) -> Result<(), String> {
+    let caller = caller();
+    let has_permission = STATE.with(|s| s.borrow().has_permission(&caller, permission));
+    if has_permission {
+        Ok(())
+    } else {
+        match canister_status(CanisterIdRecord {
+            canister_id: ic_cdk::api::id(),
+        })
+        .await
+        {
+            Err((code, msg)) => trap(&format!(
+                "Caller does not have {} permission. Failed to determine if caller is canister controller with code {:?} and message '{}'",
+                permission,
+                code, msg
+            )),
+            Ok((a,)) => {
+                if a.settings.controllers.contains(&caller) {
+                    Ok(())
+                } else {
+                    Err(format!("Caller does not have {} permission and is not a controller.", permission))
+                }
+            }
+        }
+    }
+}
+
+async fn is_controller() -> Result<(), String> {
+    let caller = caller();
+    match canister_status(CanisterIdRecord {
+        canister_id: ic_cdk::api::id(),
+    })
+    .await
+    {
+        Err((code, msg)) => trap(&format!(
+            "Failed to determine if caller is canister controller with code {:?} and message '{}'",
+            code, msg
+        )),
+        Ok((a,)) => {
+            if a.settings.controllers.contains(&caller) {
+                Ok(())
+            } else {
+                Err("Caller is not a controller.".to_string())
+            }
+        }
+    }
 }
 
 pub fn init() {
     STATE.with(|s| {
         let mut s = s.borrow_mut();
         s.clear();
-        s.authorize_unconditionally(caller());
+        s.grant_permission(caller(), &Permission::Commit);
     });
 }
 

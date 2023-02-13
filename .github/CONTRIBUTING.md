@@ -18,6 +18,14 @@ sdk $ dfx --version
 dfx 0.9.1-63-gd7020bbb
 ```
 
+## Developing `ic-certified-assets`
+
+When you change `ic-certified-assets` code (or `ic-frontend-canister`), you must update the canister binary stored in `src/distributed`.
+This is done via `./scripts/update-frontend-canister.sh --release-build`. You need to have Docker (buildx >=v0.8) installed and running.
+
+Then update `CHANGELOG.md` to include the newest sha2 hash (*not* git commit hash) and a link to your PR.
+If there is already an entry in the 'Unreleased' section, change it; if not, add a new one. See the example in [#2699](https://github.com/pull/2699/commits/c191ce5ac529de4499c50a0d2bc70ac6a3cb3afc).
+
 ### End-to-End Tests
 
 #### Setup
@@ -25,16 +33,22 @@ dfx 0.9.1-63-gd7020bbb
 1. Install bats and bats-support 0.3.0. See the CI provisioning scripts for examples:
     - [Linux](../scripts/workflows/provision-linux.sh)
     - [Darwin](../scripts/workflows/provision-darwin.sh)
-2. Export `BATSLIB` to your bats-support directory, typically:
+1. Export `BATSLIB` to your bats-support directory, typically:
     ``` bash
     $ export BATSLIB=/usr/local/lib/bats-support
     ```
-3. Build dfx and add its target directory to your path:
+1. Build dfx and add its target directory to your path:
     ``` bash
     sdk $ cargo build
     sdk $ export PATH="$(pwd)/target/debug:$PATH"
     ```
-4. Install `jq`.
+1. Set up the environment variables required by the e2e tests:
+    ``` bash
+    export archive="$(pwd)/e2e/archive"
+    export utils="$(pwd)/e2e/utils"
+    export assets="$(pwd)/e2e/assets"
+    ```
+1. Install `jq`.
 
 #### Running End-to-End Tests
 
@@ -80,11 +94,11 @@ What that means is your PR title should start with one of the following prefix:
 ### Updating the Replica
 
 #### Using GitHub Action
-. Head over to [the GitHub Action](https://github.com/dfinity/sdk/actions/workflows/update-replica-version.yml).
-. Click "Run workflow" button, choose appropriate options (you're probably fine with using defaults), and click "Run workflow" (the green one). 
-. Depending on the selected options, the workflow will run anything between 3 to 35 minutes. After that time, a new PR will be created.
-. The PR contains the content that needs to be pasted into CHANGELOG.adoc, as well as the link for editing the CHANGELOG.adoc directly on the branch of that PR.
-. After making changes to the CHANGELOG.adoc file, PR is ready for review.
+- Head over to [the GitHub Action](https://github.com/dfinity/sdk/actions/workflows/update-replica-version.yml).
+- Click "Run workflow" button, choose appropriate options (you're probably fine with using defaults), and click "Run workflow" (the green one). 
+- Depending on the selected options, the workflow will run anything between 3 to 35 minutes. After that time, a new PR will be created.
+- The PR contains the content that needs to be pasted into CHANGELOG.adoc, as well as the link for editing the CHANGELOG.adoc directly on the branch of that PR.
+- After making changes to the CHANGELOG.adoc file, PR is ready for review.
 
 #### Locally
 To update the replica to a given $SHA from the dfinity repo, execute the following:

@@ -13,11 +13,15 @@ pub(crate) const ASSETS_CONFIG_FILENAME_JSON: &str = ".ic-assets.json";
 pub(crate) const ASSETS_CONFIG_FILENAME_JSON5: &str = ".ic-assets.json5";
 
 /// A final piece of metadata assigned to the asset
-#[derive(Debug, Default, PartialEq, Eq, Serialize, Clone)]
+#[derive(Derivative, PartialEq, Eq, Serialize, Clone)]
+#[derivative(Default)]
 pub struct AssetConfig {
     pub(crate) cache: Option<CacheConfig>,
     pub(crate) headers: Option<HeadersConfig>,
     pub(crate) ignore: Option<bool>,
+    pub(crate) enable_aliasing: Option<bool>,
+    #[derivative(Default(value = "Some(false)"))]
+    pub(crate) allow_raw_access: Option<bool>,
 }
 
 pub(crate) type HeadersConfig = HashMap<String, String>;
@@ -25,6 +29,10 @@ pub(crate) type HeadersConfig = HashMap<String, String>;
 #[derive(Deserialize, Serialize, Debug, Default, Clone, PartialEq, Eq)]
 pub(crate) struct CacheConfig {
     pub(crate) max_age: Option<u64>,
+}
+
+fn default_raw_access() -> Option<bool> {
+    Some(false)
 }
 
 /// A single configuration object, from `.ic-assets.json` config file
@@ -46,8 +54,13 @@ pub struct AssetConfigRule {
     headers: Maybe<HeadersConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     ignore: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    enable_aliasing: Option<bool>,
     #[serde(skip_serializing)]
     used: bool,
+    /// Redirects the traffic from .raw.ic0.app domain to .ic0.app
+    #[serde(skip_serializing_if = "Option::is_none")]
+    allow_raw_access: Option<bool>,
 }
 
 #[derive(Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -206,7 +219,7 @@ impl AssetConfigTreeNode {
         };
 
         configs.insert(dir.to_path_buf(), parent_ref.clone());
-        for f in std::fs::read_dir(&dir)
+        for f in std::fs::read_dir(dir)
             .with_context(|| format!("Unable to read directory {}", &dir.display()))?
             .filter_map(|x| x.ok())
             .filter(|x| x.file_type().map_or_else(|_e| false, |ft| ft.is_dir()))
@@ -248,6 +261,14 @@ impl AssetConfig {
         if other.ignore.is_some() {
             self.ignore = other.ignore;
         }
+
+        if other.enable_aliasing.is_some() {
+            self.enable_aliasing = other.enable_aliasing;
+        }
+
+        if other.allow_raw_access.is_some() {
+            self.allow_raw_access = other.allow_raw_access;
+        }
         self
     }
 }
@@ -255,7 +276,7 @@ impl AssetConfig {
 /// This module contains various utilities needed for serialization/deserialization
 /// and pretty-printing of the `AssetConfigRule` data structure.
 mod rule_utils {
-    use super::{AssetConfigRule, CacheConfig, HeadersConfig, Maybe};
+    use super::{AssetConfig, AssetConfigRule, CacheConfig, HeadersConfig, Maybe};
     use anyhow::Context;
     use globset::{Glob, GlobMatcher};
     use serde::{Deserialize, Serializer};
@@ -335,6 +356,9 @@ mod rule_utils {
         #[serde(default, deserialize_with = "headers_deserialize")]
         headers: Maybe<HeadersConfig>,
         ignore: Option<bool>,
+        enable_aliasing: Option<bool>,
+        #[serde(default = "super::default_raw_access")]
+        allow_raw_access: Option<bool>,
     }
 
     impl AssetConfigRule {
@@ -344,6 +368,8 @@ mod rule_utils {
                 cache,
                 headers,
                 ignore,
+                enable_aliasing,
+                allow_raw_access,
             }: InterimAssetConfigRule,
             config_file_parent_dir: &Path,
         ) -> anyhow::Result<Self> {
@@ -367,7 +393,69 @@ mod rule_utils {
                 headers,
                 ignore,
                 used: false,
+                enable_aliasing,
+                allow_raw_access,
             })
+        }
+    }
+
+    impl std::fmt::Display for AssetConfig {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            let mut s = String::new();
+
+            if self.cache.is_some() || self.headers.is_some() {
+                s.push('(');
+                if self.cache.as_ref().map_or(false, |v| v.max_age.is_some()) {
+                    s.push_str("with cache");
+                }
+                if let Some(ref headers) = self.headers {
+                    if !headers.is_empty() {
+                        if s.len() > 1 {
+                            s.push_str(" and ");
+                        } else {
+                            s.push_str("with ");
+                        }
+                        s.push_str(headers.len().to_string().as_str());
+                        if headers.len() == 1 {
+                            s.push_str(" header");
+                        } else {
+                            s.push_str(" headers");
+                        }
+                    }
+                }
+                s.push(')');
+            }
+
+            write!(f, "{}", s)
+        }
+    }
+
+    impl std::fmt::Debug for AssetConfig {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            let mut s = String::new();
+
+            if let Some(ref cache) = self.cache {
+                if let Some(ref max_age) = cache.max_age {
+                    s.push_str(&format!("  - HTTP cache max-age: {}\n", max_age));
+                }
+            }
+            if let Some(aliasing) = self.enable_aliasing {
+                s.push_str(&format!(
+                    "  - URL path aliasing: {}\n",
+                    if aliasing { "enabled" } else { "disabled" }
+                ));
+            }
+            if let Some(ref headers) = self.headers {
+                for (key, value) in headers {
+                    s.push_str(&format!(
+                        "  - HTTP Response header: {key}: {value}\n",
+                        key = key,
+                        value = value
+                    ));
+                }
+            }
+
+            write!(f, "{}", s)
         }
     }
 }
@@ -392,7 +480,7 @@ mod with_tempdir {
             .map(|d| assets_dir.as_ref().join(d))
             .map(std::fs::create_dir_all);
 
-        let _asset_files = [
+        [
             "index.html",
             "js/index.js",
             "js/index.map.js",
@@ -805,6 +893,47 @@ mod with_tempdir {
             )
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn allow_raw_access_flag() -> anyhow::Result<()> {
+        let cfg = Some(HashMap::from([(
+            "".to_string(),
+            r#"[
+  {
+    "match": "*",
+    "allow_raw_access": true
+  }
+]"#
+            .to_string(),
+        )]));
+        let assets_temp_dir = create_temporary_assets_directory(cfg, 0).unwrap();
+        let assets_dir = assets_temp_dir.path().canonicalize()?;
+        let mut assets_config = AssetSourceDirectoryConfiguration::load(&assets_dir)?;
+        assert_eq!(
+            assets_config.get_asset_config(assets_dir.join("index.html").as_path())?,
+            AssetConfig {
+                allow_raw_access: Some(true),
+                ..Default::default()
+            },
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn default_value_for_allow_raw_access_flag() -> anyhow::Result<()> {
+        let cfg = Some(HashMap::from([("".to_string(), "[]".to_string())]));
+        let assets_temp_dir = create_temporary_assets_directory(cfg, 0).unwrap();
+        let assets_dir = assets_temp_dir.path().canonicalize()?;
+        let mut assets_config = AssetSourceDirectoryConfiguration::load(&assets_dir)?;
+        assert_eq!(
+            assets_config.get_asset_config(assets_dir.join("index.html").as_path())?,
+            AssetConfig {
+                allow_raw_access: Some(false),
+                ..Default::default()
+            },
+        );
         Ok(())
     }
 }
