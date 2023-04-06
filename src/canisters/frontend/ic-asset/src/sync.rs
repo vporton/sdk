@@ -1,14 +1,22 @@
-use crate::asset_canister::batch::{commit_batch, create_batch};
-use crate::asset_canister::list::list_assets;
-use crate::asset_canister::protocol::{AssetDetails, BatchOperationKind, CommitBatchArguments};
-use crate::asset_config::{
+use crate::asset::config::{
     AssetConfig, AssetSourceDirectoryConfiguration, ASSETS_CONFIG_FILENAME_JSON,
 };
-use crate::operations::{
-    create_new_assets, delete_obsolete_assets, set_encodings, unset_obsolete_encodings,
+use crate::batch_upload::plumbing::ChunkUploadTarget;
+use crate::batch_upload::{
+    self,
+    operations::AssetDeletionReason,
+    plumbing::{make_project_assets, AssetDescriptor},
 };
-use crate::plumbing::{make_project_assets, AssetDescriptor, ProjectAsset};
-use anyhow::{bail, Context};
+use crate::canister_api::methods::{
+    api_version::api_version,
+    batch::{commit_batch, compute_evidence, create_batch, propose_commit_batch},
+    list::list_assets,
+};
+use crate::canister_api::types::batch_upload::{
+    common::ComputeEvidenceArguments, v0::CommitBatchArguments,
+};
+
+use anyhow::{anyhow, bail, Context};
 use ic_utils::Canister;
 use slog::{info, warn, Logger};
 use std::collections::HashMap;
@@ -23,38 +31,95 @@ pub async fn upload_content_and_assemble_sync_operations(
 ) -> anyhow::Result<CommitBatchArguments> {
     let asset_descriptors = gather_asset_descriptors(dirs, logger)?;
 
-    let container_assets = list_assets(canister).await?;
+    let canister_assets = list_assets(canister).await?;
 
     info!(logger, "Starting batch.");
 
     let batch_id = create_batch(canister).await?;
 
-    info!(logger, "Staging contents of new and changed assets:");
+    info!(
+        logger,
+        "Staging contents of new and changed assets in batch {}:", batch_id
+    );
+
+    let chunk_upload_target = ChunkUploadTarget {
+        canister,
+        batch_id: &batch_id,
+    };
 
     let project_assets = make_project_assets(
-        canister,
-        &batch_id,
+        Some(&chunk_upload_target),
         asset_descriptors,
-        &container_assets,
+        &canister_assets,
         logger,
     )
     .await?;
 
-    let operations = assemble_synchronization_operations(project_assets, container_assets);
-    Ok(CommitBatchArguments {
+    let commit_batch_args = batch_upload::operations::assemble_commit_batch_arguments(
+        project_assets,
+        canister_assets,
+        AssetDeletionReason::Obsolete,
         batch_id,
-        operations,
-    })
+    );
+
+    Ok(commit_batch_args)
 }
 
 /// Sets the contents of the asset canister to the contents of a directory, including deleting old assets.
 pub async fn sync(canister: &Canister<'_>, dirs: &[&Path], logger: &Logger) -> anyhow::Result<()> {
-    let arg = upload_content_and_assemble_sync_operations(canister, dirs, logger).await?;
-
+    let commit_batch_args =
+        upload_content_and_assemble_sync_operations(canister, dirs, logger).await?;
     info!(logger, "Committing batch.");
-    commit_batch(canister, arg).await?;
+    let canister_api_version = api_version(canister).await;
+    info!(logger, "Committing batch.");
+    match canister_api_version {
+        0.. => {
+            // in the next PR:
+            // if BATCH_UPLOAD_API_VERSION == 1 {
+            //     let commit_batch_args = commit_batch_args.try_into::<v0::CommitBatchArguments>()?;
+            //     warn!(logger, "The asset canister is running an old version of the API. It will not be able to set assets properties.");
+            // }
+            commit_batch(canister, commit_batch_args)
+                .await
+                .map_err(|e| anyhow!("Incompatible canister API version: {}", e))?;
+        }
+    }
 
     Ok(())
+}
+
+/// Stage changes and propose the batch for commit.
+pub async fn prepare_sync_for_proposal(
+    canister: &Canister<'_>,
+    dirs: &[&Path],
+    logger: &Logger,
+) -> anyhow::Result<()> {
+    let arg = upload_content_and_assemble_sync_operations(canister, dirs, logger).await?;
+    let arg = sort_batch_operations(arg);
+    let batch_id = arg.batch_id.clone();
+
+    info!(logger, "Preparing batch {}.", batch_id);
+    propose_commit_batch(canister, arg).await?;
+
+    let compute_evidence_arg = ComputeEvidenceArguments {
+        batch_id: batch_id.clone(),
+        max_iterations: Some(97), // 75% of max(130) = 97.5
+    };
+    info!(logger, "Computing evidence.");
+    let evidence = loop {
+        if let Some(evidence) = compute_evidence(canister, &compute_evidence_arg).await? {
+            break evidence;
+        }
+    };
+
+    info!(logger, "Proposed commit of batch {} with evidence {}.  Either commit it by proposal, or delete it.", batch_id, hex::encode(evidence));
+
+    Ok(())
+}
+
+fn sort_batch_operations(mut args: CommitBatchArguments) -> CommitBatchArguments {
+    args.operations.sort();
+    args
 }
 
 fn include_entry(entry: &walkdir::DirEntry, config: &AssetConfig) -> bool {
@@ -151,26 +216,10 @@ fn gather_asset_descriptors(
     Ok(asset_descriptors.into_values().collect())
 }
 
-fn assemble_synchronization_operations(
-    project_assets: HashMap<String, ProjectAsset>,
-    container_assets: HashMap<String, AssetDetails>,
-) -> Vec<BatchOperationKind> {
-    let mut container_assets = container_assets;
-
-    let mut operations = vec![];
-
-    delete_obsolete_assets(&mut operations, &project_assets, &mut container_assets);
-    create_new_assets(&mut operations, &project_assets, &container_assets);
-    unset_obsolete_encodings(&mut operations, &project_assets, &container_assets);
-    set_encodings(&mut operations, project_assets);
-
-    operations
-}
-
 #[cfg(test)]
 mod test_gathering_asset_descriptors_with_tempdir {
 
-    use crate::asset_config::{CacheConfig, HeadersConfig};
+    use crate::asset::config::{CacheConfig, HeadersConfig};
 
     use super::AssetDescriptor;
     use std::{
