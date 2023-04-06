@@ -215,19 +215,19 @@
     "sns-x86_64-darwin": {
         "builtin": false,
         "description": "The sns binary.",
-        "rev": "a42d0a8399476a83878bb87c74eb46b2d8e05000",
-        "sha256": "19rknls2g1lhf92s33sjjmwiiy9rqhrb97k3j3kdrs4zyblic0aq",
+        "rev": "742d0a8399476a83878bb87c74eb46b2d8e05000",
+        "sha256": "1bn3c6rhj1pfkf7pg4lm9vf5hd701ammr4753rb2zk4fbqyfkwwr",
         "type": "file",
-        "url": "https://download.dfinity.systems/ic/a42d0a8399476a83878bb87c74eb46b2d8e05000/openssl-static-binaries/x86_64-darwin/sns.gz",
+        "url": "https://download.dfinity.systems/ic/742d0a8399476a83878bb87c74eb46b2d8e05000/openssl-static-binaries/x86_64-darwin/sns.gz",
         "url_template": "https://download.dfinity.systems/ic/<rev>/openssl-static-binaries/x86_64-darwin/sns.gz"
     },
     "sns-x86_64-linux": {
         "builtin": false,
         "description": "The sns binary.",
-        "rev": "a42d0a8399476a83878bb87c74eb46b2d8e05000",
-        "sha256": "1wp656nldfd0mq3g4wxkp7aipk8hgwqgz0fqf04v6ww9kgr86c3y",
+        "rev": "742d0a8399476a83878bb87c74eb46b2d8e05000",
+        "sha256": "16wswyz32pfglzywfrj0jmnylyscyzl5wlybr2slv2rlawxbarxk",
         "type": "file",
-        "url": "https://download.dfinity.systems/ic/a42d0a8399476a83878bb87c74eb46b2d8e05000/openssl-static-binaries/x86_64-linux/sns.gz",
+        "url": "https://download.dfinity.systems/ic/742d0a8399476a83878bb87c74eb46b2d8e05000/openssl-static-binaries/x86_64-linux/sns.gz",
         "url_template": "https://download.dfinity.systems/ic/<rev>/openssl-static-binaries/x86_64-linux/sns.gz"
     }
 }

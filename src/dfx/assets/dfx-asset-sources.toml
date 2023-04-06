@@ -48,8 +48,8 @@ url = 'https://download.dfinity.systems/ic/742d0a8399476a83878bb87c74eb46b2d8e05
 sha256 = '1704cf10328327279d42e5ef9e3ec8e5e2edb398fdb293e0509e6c6803e7d7ac'
 
 [x86_64-darwin.sns]
-url = 'https://download.dfinity.systems/ic/742d0a8399476a83878bb87c74eb46b2d8e05000/binaries/x86_64-darwin/sns.gz'
-sha256 = '580116e9f29fe8dce690639eb432c439f9187995528fa1457290862734b533a7'
+url = 'https://download.dfinity.systems/ic/742d0a8399476a83878bb87c74eb46b2d8e05000/openssl-static-binaries/x86_64-darwin/sns.gz'
+sha256 = '99f3e93c5e8ecc2f561ee5905cab0ae03458dc4e9592778f9bee0609b361c3ae'
 
 [x86_64-darwin.motoko-base]
 url = 'https://github.com/dfinity/motoko/releases/download/0.8.4/motoko-base-library.tar.gz'
@@ -102,8 +102,8 @@ url = 'https://download.dfinity.systems/ic/742d0a8399476a83878bb87c74eb46b2d8e05
 sha256 = 'ea132072577d055afc538861ad9652b11aad83e39fbe6e8242c7500cccc83732'
 
 [x86_64-linux.sns]
-url = 'https://download.dfinity.systems/ic/742d0a8399476a83878bb87c74eb46b2d8e05000/binaries/x86_64-linux/sns.gz'
-sha256 = '7e3083f29b8973b30970d881ff307f10cd1bd5b9b373f206aea0b946ad29e6f2'
+url = 'https://download.dfinity.systems/ic/742d0a8399476a83878bb87c74eb46b2d8e05000/openssl-static-binaries/x86_64-linux/sns.gz'
+sha256 = 'b367b53a57348b4db5c8cb535ee8f74c7bea6d954066c7fda7cf5d31bee79a9b'
 
 [x86_64-linux.motoko-base]
 url = 'https://github.com/dfinity/motoko/releases/download/0.8.4/motoko-base-library.tar.gz'
