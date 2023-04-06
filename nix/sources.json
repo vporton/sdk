@@ -86,8 +86,8 @@
         "rev": "742d0a8399476a83878bb87c74eb46b2d8e05000",
         "sha256": "1v3zz6cccjsb31fvijym0myandq375irk6r6jp3kvqpz444kg738",
         "type": "file",
-        "url": "https://download.dfinity.systems/ic/742d0a8399476a83878bb87c74eb46b2d8e05000/binaries/x86_64-darwin/ic-nns-init.gz",
-        "url_template": "https://download.dfinity.systems/ic/<rev>/binaries/x86_64-darwin/ic-nns-init.gz"
+        "url": "https://download.dfinity.systems/ic/742d0a8399476a83878bb87c74eb46b2d8e05000/openssl-static-binaries/x86_64-darwin/ic-nns-init.gz",
+        "url_template": "https://download.dfinity.systems/ic/<rev>/openssl-static-binaries/x86_64-darwin/ic-nns-init.gz"
     },
     "ic-nns-init-x86_64-linux": {
         "builtin": false,
@@ -95,8 +95,8 @@
         "rev": "742d0a8399476a83878bb87c74eb46b2d8e05000",
         "sha256": "0h7arazbmzcfg4lb8dp9ykjsl2w45d7wrswafrr5lwr3ll0h770r",
         "type": "file",
-        "url": "https://download.dfinity.systems/ic/742d0a8399476a83878bb87c74eb46b2d8e05000/binaries/x86_64-linux/ic-nns-init.gz",
-        "url_template": "https://download.dfinity.systems/ic/<rev>/binaries/x86_64-linux/ic-nns-init.gz"
+        "url": "https://download.dfinity.systems/ic/742d0a8399476a83878bb87c74eb46b2d8e05000/openssl-static-binaries/x86_64-linux/ic-nns-init.gz",
+        "url_template": "https://download.dfinity.systems/ic/<rev>/openssl-static-binaries/x86_64-linux/ic-nns-init.gz"
     },
     "ic-ref-x86_64-darwin": {
         "builtin": false,
