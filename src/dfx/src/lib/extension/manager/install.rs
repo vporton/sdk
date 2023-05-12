@@ -1,4 +1,4 @@
-use crate::commands::Command;
+use crate::commands::DfxCommand;
 use crate::lib::error::extension::ExtensionError;
 use crate::lib::extension::{manager::ExtensionManager, manifest::ExtensionCompatibilityMatrix};
 
@@ -18,12 +18,14 @@ const DFINITY_DFX_EXTENSIONS_RELEASES_URL: &str =
 
 impl ExtensionManager {
     pub fn install_extension(&self, extension_name: &str) -> Result<(), ExtensionError> {
+        // below two if statement ultimatelly check for the same thing, however,
+        // it's good to have both of them, because they describe the error more precisly
         if self.get_extension_directory(extension_name).exists() {
             return Err(ExtensionError::ExtensionAlreadyInstalled(
                 extension_name.to_string(),
             ));
         }
-        if Command::has_subcommand(extension_name) {
+        if DfxCommand::has_subcommand(extension_name) {
             return Err(ExtensionError::CommandAlreadyExists(
                 extension_name.to_string(),
             ));
