@@ -1007,6 +1007,76 @@ fn supports_custom_http_headers() {
 }
 
 #[test]
+fn checks_host_header_against_custom_domains() {
+    let mut state = State::default();
+    let time_now = 100_000_000_000;
+
+    const BODY: &[u8] = b"<!DOCTYPE html><html></html>";
+
+    create_assets(
+        &mut state,
+        time_now,
+        vec![
+            AssetBuilder::new("/contents.html", "text/html")
+                .with_encoding("identity", vec![BODY])
+                .with_header("Access-Control-Allow-Origin", "*"),
+            AssetBuilder::new("/max-age.html", "text/html")
+                .with_max_age(604800)
+                .with_encoding("identity", vec![BODY])
+                .with_header("X-Content-Type-Options", "nosniff"),
+        ],
+    );
+
+    let response = state.http_request(
+        RequestBuilder::get("/contents.html")
+            .with_header("Accept-Encoding", "gzip,identity")
+            .build(),
+        &[],
+        unused_callback(),
+    );
+
+    assert_eq!(response.status_code, 200);
+    assert_eq!(response.body.as_ref(), BODY);
+    assert!(
+        lookup_header(&response, "Access-Control-Allow-Origin").is_some(),
+        "Missing Access-Control-Allow-Origin header in response: {:#?}",
+        response,
+    );
+    assert!(
+        lookup_header(&response, "Access-Control-Allow-Origin") == Some("*"),
+        "Incorrect value for Access-Control-Allow-Origin header in response: {:#?}",
+        response,
+    );
+
+    let response = state.http_request(
+        RequestBuilder::get("/max-age.html")
+            .with_header("Accept-Encoding", "gzip,identity")
+            .build(),
+        &[],
+        unused_callback(),
+    );
+
+    assert_eq!(response.status_code, 200);
+    assert_eq!(response.body.as_ref(), BODY);
+    assert_eq!(
+        lookup_header(&response, "Cache-Control"),
+        Some("max-age=604800"),
+        "No matching Cache-Control header in response: {:#?}",
+        response,
+    );
+    assert!(
+        lookup_header(&response, "X-Content-Type-Options").is_some(),
+        "Missing X-Content-Type-Options header in response: {:#?}",
+        response,
+    );
+    assert!(
+        lookup_header(&response, "X-Content-Type-Options") == Some("nosniff"),
+        "Incorrect value for X-Content-Type-Options header in response: {:#?}",
+        response,
+    );
+}
+
+#[test]
 fn supports_getting_and_setting_asset_properties() {
     let mut state = State::default();
     let time_now = 100_000_000_000;

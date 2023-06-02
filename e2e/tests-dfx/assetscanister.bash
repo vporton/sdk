@@ -884,6 +884,35 @@ it's cherry season
 CHERRIES" "$stdout"
 }
 
+@test "verifies host allowlist" {
+    install_asset assetscanister
+
+    echo '[
+      {
+        "match": ".well-known",
+        "ignore": false
+      }
+    ]' > src/e2e_project_frontend/assets/.ic-assets.json5
+    mkdir src/e2e_project_frontend/assets/.well-known
+    echo "allowed.com" >src/e2e_project_frontend/assets/.well-known/ic-domains
+
+    dfx_start
+    dfx deploy
+
+    ID=$(dfx canister id e2e_project_frontend)
+    PORT=$(get_webserver_port)
+
+    assert_command dfx canister call --query e2e_project_frontend list '(record{})'
+    assert_command curl --head "http://localhost:$PORT/sample-asset.txt?canisterId=$ID"
+    assert_eq "XYZ"
+        assert_match "x-extra-header: x-extra-value"
+        assert_match "x-header: x-value"
+        assert_match "x-well-known-header: x-well-known-value"
+        assert_match "cache-control: max-age=1000"
+
+
+}
+
 @test 'can store arbitrarily large files' {
     [ "$USE_IC_REF" ] && skip "skip for ic-ref" # this takes too long for ic-ref's wasm interpreter
 
