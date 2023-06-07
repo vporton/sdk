@@ -2,7 +2,13 @@
 
 ## Overview
 
-## Asset Fields
+The asset canister stores static assets, such as HTML, CSS, JavaScript, images, and other media files. It can store different content encodings of the same asset, such as `identity` and `gzip`.
+
+While the size of any given asset content encoding is limited only by the canister's available memory, the amount of data that can be passed to or returned by a single method call is limited.  For this reason, the interface provides for data upload and retrieval in smaller pieces, called "chunks".
+
+This document is meant to describe the interface, not the idiosyncrasies of the implementation.
+
+## The Asset Type
 
 ### Key
 
@@ -20,7 +26,7 @@ An asset contains one or more encodings. Each encoding is identified by a `conte
 
 Each encoding contains one or more "chunks" of data. The size of each chunk is limited by the message ingress limit.
 
-Content chunks can have any size that fits within the message ingress limit, but all chunks except the last must have the same size.
+Content chunks can have any size that fits within the message ingress limit, but for a given asset encoding, all chunks except the last must have the same size.
 
 ### Content Hash
 
@@ -36,13 +42,16 @@ The `headers` field is a list of additional headers to set when serving the asse
 
 ### Aliasing
 
-The `is_aliased` field actually whether aliases are enabled for an asset.
+The `is_enabled` field should be called `enable_aliasing`.  It enables retrieval of an asset with a different key, if the requested key does not match any asset.
 
-If aliasing is enabled, this means that if lookup for a given `key` 
+The rules are as follows:
+
+- an attempt to retrieve `{some key}/` can instead retrieve `{some key}/index.html`
+- an attempt to retrieve `{some key}`, where `{some key}` does not end with `.html`, can instead retrieve either `{some key}.html` or `{some key}/index.html`
 
 ### Raw Access
 
-
+The `allow_raw_access` field controls whether an asset can be retrieved from `raw.ic0.app` or `raw.icp0.io`.  If false (which is the default), then the asset canister will redirect any such attempts to the non-raw URL.
 
 ## Storing Assets
 
@@ -52,26 +61,78 @@ Message ingress limits constrain the size of a single update to the asset canist
 
 To upload data, first create a batch, then upload chunks to the batch, then commit the batch.
 
-- `create_batch()`: creates a batch
-- `create_chunk()`: creates a chunk in a batch
-- `commit_batch()`: 
-- `delete_batch()`: deletes a batch
+#### Method: `create_batch`
+
+The `create_batch` method:
+- Deletes any expired batches.
+- Verifies no "commit batch arguments" have been proposed.
+- Verifies creating a new batch would not exceed the batch creation limits.
+- Creates a new batch.
+- Returns the ID of the new batch.
+
+#### Method: `create_chunk`
+
+The `create_chunk` method:
+- Verifies that the batch exists.
+- Verifies that creating the chunk would not exceed the chunk creation limits.
+- Creates the new chunk.
+- Extends the batch expiry time.
+- Returns the ID of the new chunk.
+
+#### Method: `commit_batch`
+
+The `commit_batch` method:
+- Executes each operation in the method arguments.
+- Deletes the batch.
+
+It is not required that the batch ID passed in the method arguments matches any batch ID.
+
+The `commit_batch` method accepts a list of batch operations.
+
+| Operation | Description |
+| --------- | ----------- | 
+| `CreateAsset` | Creates a new asset. |
+| `SetAssetContent` | Adds or changes content for an asset. |
+| `SetAssetProperties` | Changes properties for an asset. |
+| `UnsetAssetContent` | Removes content for an asset. |
+| `DeleteAsset` | Deletes an asset. |
+| `Clear` | Deletes all assets. |
+
+#### Method: `delete_batch`
 
 #### Batch Expiry
 
 Batches for which `create_chunk()` has not been called within a certain time period may be deleted.
 
-### Updates By Proposal
+### Batch Updates By Proposal
 
 For canisters controlled by an SNS, the asset canister supports updates by proposal. In this scenario, one principal uploads the proposed changes, which the SNS will commit if the proposal is accepted.
 
-- `propose_commit_batch()`: proposes a batch to be committed
-- `compute_evidence()`: computes evidence for a proposed batch
-- `commit_proposed_batch()`: commits a proposed batch
+#### Method: `propose_commit_batch`
 
-#### Evidence
+The `propose_commit_batch` method takes the same arguments as `commit_batch`, but does not execute the operations. Instead, it stores the operations in a "proposed batch" for later execution by the `commit_proposed_batch` method.
 
-### Single-Call Updates
+#### Method: `compute_evidence`
+
+The `compute_evidence` method computes a hash over the proposed commit batch arguments.
+
+Since calculation of this hash may exceed the per-message computation limits, this method computes the hash iteratively, saving its work as it goes. Once it completes the computation, it saves the hash as `evidence` to be checked later.
+
+The method will return `None` if the hash computation has not yet completed, or `Some(evidence)` if the hash computation has been completed.
+
+The returned `evidence` value must be passed to the `commit_proposed_batch` method.
+
+#### Method: `commit_proposed_batch`
+
+The `commit_proposed_batch` method:
+- Verifies that the batch exists.
+- Verifies that the batch has proposed commit batch arguments.
+- Verifies that the evidence has been computed by `compute_evidence`.
+- Verifies that the evidence passed in the arguments matches the evidence computed by `compute_evidence`.
+- Executes each operation in the proposed commit batch arguments.
+- Deletes the batch.
+
+### Individual Updates
 
 ## Retrieving Assets
 
@@ -83,7 +144,9 @@ For canisters controlled by an SNS, the asset canister supports updates by propo
 
 ## Other Methods
 
-## Types
+## API Versions
+
+
 
 ## Candid Definition
 
