@@ -8,51 +8,6 @@ While the size of any given asset content encoding is limited only by the canist
 
 This document is meant to describe the interface, not the idiosyncrasies of the implementation.
 
-## The Asset Type
-
-### Key
-
-The `key` identifies the asset. It is a string that must be unique within the asset canister. By convention, it should begin with a forward slash. For example, `/index.html`.
-
-### Content Type
-
-The `content_type` is a string that identifies the type of the asset, such as `text/plain` or `image/jpeg`. It is used to set the `Content-Type` header when serving the asset over HTTP.
-
-### Content Encoding
-
-An asset contains one or more encodings. Each encoding is identified by a `content_encoding` string, such as `identity` or `gzip`. It is used to set the `Content-Encoding` header when serving the asset over HTTP.
-
-### Content Chunks
-
-Each encoding contains one or more "chunks" of data. The size of each chunk is limited by the message ingress limit.
-
-Content chunks can have any size that fits within the message ingress limit, but for a given asset encoding, all chunks except the last must have the same size.
-
-### Content Hash
-
-The `sha256` field contains the SHA-256 hash of the entire asset encoding. It is used to set the `ETag` header when serving the asset over HTTP.
-
-### Max Age
-
-The `max_age` field is the maximum number of seconds that the asset can be cached by a browser or CDN. It is used to set the `max-age` value of the `Cache-Control` header when serving the asset over HTTP.
-
-### Headers
-
-The `headers` field is a list of additional headers to set when serving the asset over HTTP.
-
-### Aliasing
-
-The `is_enabled` field should be called `enable_aliasing`.  It enables retrieval of an asset with a different key, if the requested key does not match any asset.
-
-The rules are as follows:
-
-- an attempt to retrieve `{some key}/` can instead retrieve `{some key}/index.html`
-- an attempt to retrieve `{some key}`, where `{some key}` does not end with `.html`, can instead retrieve either `{some key}.html` or `{some key}/index.html`
-
-### Raw Access
-
-The `allow_raw_access` field controls whether an asset can be retrieved from `raw.ic0.app` or `raw.icp0.io`.  If false (which is the default), then the asset canister will redirect any such attempts to the non-raw URL.
-
 ## Storing Assets
 
 ### Batch Updates
@@ -61,16 +16,96 @@ Message ingress limits constrain the size of a single update to the asset canist
 
 To upload data, first create a batch, then upload chunks to the batch, then commit the batch.
 
-#### Method: `create_batch`
+#### Batch Expiry
 
-The `create_batch` method:
-- Deletes any expired batches.
-- Verifies no "commit batch arguments" have been proposed.
-- Verifies creating a new batch would not exceed the batch creation limits.
-- Creates a new batch.
-- Returns the ID of the new batch.
+Batches for which `create_chunk()` has not been called within a certain time period may be deleted.
 
-#### Method: `create_chunk`
+### Batch Updates By Proposal
+
+For canisters controlled by an SNS, the asset canister supports updates by proposal. In this scenario, one principal uploads the proposed changes, which the SNS will commit if the proposal is accepted.
+
+### Individual Updates
+
+## Retrieving Assets
+
+### HTTP Requests
+
+#### Streaming
+
+## Other Methods
+
+## Type Reference
+
+### Asset {#type-asset}
+
+#### Key {#field-asset-key}
+
+The `key` identifies the asset. It is a string that must be unique within the asset canister. By convention, it should begin with a forward slash. For example, `/index.html`.
+
+#### Content Type {#field-asset-content-type}
+
+The `content_type` is a string that identifies the type of the asset, such as `text/plain` or `image/jpeg`. It is used to set the `Content-Type` header when serving the asset over HTTP.
+
+#### Content Encoding {#field-asset-content-encoding}
+
+An asset contains one or more encodings. Each encoding is identified by a `content_encoding` string, such as `identity` or `gzip`. It is used to set the `Content-Encoding` header when serving the asset over HTTP.
+
+#### Content Chunks
+
+Each encoding contains one or more "chunks" of data. The size of each chunk is limited by the message ingress limit.
+
+Content chunks can have any size that fits within the message ingress limit, but for a given asset encoding, all chunks except the last must have the same size.
+
+#### Content Hash {#field-asset-sha256}
+
+The `sha256` field contains the SHA-256 hash of the entire asset encoding. It is used to set the `ETag` header when serving the asset over HTTP.
+
+#### Max Age {#field-asset-max-age}
+
+The `max_age` field is the maximum number of seconds that the asset can be cached by a browser or CDN. It is used to set the `max-age` value of the `Cache-Control` header when serving the asset over HTTP.
+
+#### Headers {#field-asset-headers}
+
+The `headers` field is a list of additional headers to set when serving the asset over HTTP.
+
+#### Aliasing {#field-asset-enable-aliasing}
+
+The `is_enabled` field should be called `enable_aliasing`.  It enables retrieval of an asset with a different key, if the requested key does not match any asset.
+
+The rules are as follows:
+
+- an attempt to retrieve `{some key}/` can instead retrieve `{some key}/index.html`
+- an attempt to retrieve `{some key}`, where `{some key}` does not end with `.html`, can instead retrieve either `{some key}.html` or `{some key}/index.html`
+
+#### Raw Access {#field-asset-allow-raw-access}
+
+The `allow_raw_access` field controls whether an asset can be retrieved from `raw.ic0.app` or `raw.icp0.io`.  If false (which is the default), then the asset canister will redirect any such attempts to the non-raw URL.
+
+### Batch
+
+### Chunk
+
+## Method Reference
+
+### HTTP Methods
+
+### Retrieval Methods
+
+#### Method: `get`
+
+### Batch Update Methods
+
+#### Method: `create_batch` {#method-create-batch}
+
+This method creates a new [batch](#batch) and returns its ID.
+
+Preconditions:
+- No batch exists for which [propose_commit_batch](#method-propose_commit_batch) has been called.
+- Creation of a new batch would not exceed the batch creation limits.
+
+#### Method: `create_chunk` {#method-create-chunk}
+
+This method creates a new chunk.
 
 The `create_chunk` method:
 - Verifies that the batch exists.
@@ -79,7 +114,7 @@ The `create_chunk` method:
 - Extends the batch expiry time.
 - Returns the ID of the new chunk.
 
-#### Method: `commit_batch`
+#### Method: `commit_batch` {#method-commit-batch}
 
 The `commit_batch` method:
 - Executes each operation in the method arguments.
@@ -98,19 +133,14 @@ The `commit_batch` method accepts a list of batch operations.
 | `DeleteAsset` | Deletes an asset. |
 | `Clear` | Deletes all assets. |
 
-#### Method: `delete_batch`
+#### Method: `delete_batch` {#method-delete-batch}
 
-#### Batch Expiry
 
-Batches for which `create_chunk()` has not been called within a certain time period may be deleted.
-
-### Batch Updates By Proposal
-
-For canisters controlled by an SNS, the asset canister supports updates by proposal. In this scenario, one principal uploads the proposed changes, which the SNS will commit if the proposal is accepted.
+### Update-By-Proposal Methods
 
 #### Method: `propose_commit_batch`
 
-The `propose_commit_batch` method takes the same arguments as `commit_batch`, but does not execute the operations. Instead, it stores the operations in a "proposed batch" for later execution by the `commit_proposed_batch` method.
+This method takes the same arguments as `commit_batch`, but does not execute the operations. Instead, it stores the operations in a "proposed batch" for later execution by the `commit_proposed_batch` method.
 
 #### Method: `compute_evidence`
 
@@ -122,7 +152,7 @@ The method will return `None` if the hash computation has not yet completed, or 
 
 The returned `evidence` value must be passed to the `commit_proposed_batch` method.
 
-#### Method: `commit_proposed_batch`
+#### Method: `commit_proposed_batch` {#method-commit-proposed-batch}
 
 The `commit_proposed_batch` method:
 - Verifies that the batch exists.
@@ -132,19 +162,15 @@ The `commit_proposed_batch` method:
 - Executes each operation in the proposed commit batch arguments.
 - Deletes the batch.
 
-### Individual Updates
 
-## Retrieving Assets
+### Access Control Methods
 
-### HTTP Requests
 
-#### Streaming
 
-## Access Control
-
-## Other Methods
 
 ## API Versions
+
+### API Version 1
 
 
 
