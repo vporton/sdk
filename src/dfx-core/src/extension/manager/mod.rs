@@ -1,4 +1,4 @@
-use crate::config::cache::{get_bin_cache, get_cache_root};
+use crate::config::cache::get_bin_cache;
 use crate::error::extension::ExtensionError;
 use crate::extension::{
     manifest::{ExtensionManifest, MANIFEST_FILE_NAME},
@@ -22,12 +22,8 @@ pub struct ExtensionManager {
 
 impl ExtensionManager {
     pub fn new(version: &Version) -> Result<Self, ExtensionError> {
-        let versioned_cache_dir = get_bin_cache(version.to_string().as_str()).map_err(|e| {
-            ExtensionError::FindCacheDirectoryFailed(
-                get_cache_root().unwrap_or_default().join("versions"),
-                e,
-            )
-        })?;
+        let versioned_cache_dir = get_bin_cache(version.to_string().as_str())
+            .map_err(|e| ExtensionError::FindCacheDirectoryFailed(e))?;
         let dir = versioned_cache_dir.join("extensions");
         ensure_dir_exists(&dir).map_err(ExtensionError::EnsureExtensionDirExistsFailed)?;
 
@@ -66,6 +62,11 @@ impl ExtensionManager {
         let manifest_path = self
             .get_extension_directory(&ext.name)
             .join(MANIFEST_FILE_NAME);
-        load_json_file(&manifest_path).map_err(ExtensionError::ExtensionManifestIsNotValidJson)
+        load_json_file(&manifest_path).map_err(ExtensionError::ExtensionManifestIsNotValid)
+    }
+
+    pub(crate) fn is_extension_installed(&self, _canister_type: &str) -> bool {
+        // TODO
+        true
     }
 }

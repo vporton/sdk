@@ -5,8 +5,8 @@ use thiserror::Error;
 #[derive(Error, Debug)]
 pub enum ExtensionError {
     // errors related to extension directory management
-    #[error("Cannot find cache directory '{0}': {1}")]
-    FindCacheDirectoryFailed(std::path::PathBuf, crate::error::cache::CacheError),
+    #[error("Cannot find cache directory: '{0}'")]
+    FindCacheDirectoryFailed(crate::error::cache::CacheError),
 
     #[error("Cannot get extensions directory: {0}")]
     EnsureExtensionDirExistsFailed(crate::error::fs::FsError),
@@ -17,6 +17,9 @@ pub enum ExtensionError {
     // errors related to installing extensions
     #[error("Extension '{0}' is already installed.")]
     ExtensionAlreadyInstalled(String),
+
+    #[error("Extension '{0}' cannot be installed because it conflicts with an existing command. Consider using '--install-as' flag to install this extension under different name.")]
+    CommandAlreadyExists(String),
 
     #[error("Cannot fetch compatibility.json from '{0}': {1}")]
     CompatibilityMatrixFetchError(String, reqwest::Error),
@@ -63,11 +66,17 @@ pub enum ExtensionError {
     ExtensionsDirectoryIsNotReadable(crate::error::fs::FsError),
 
     #[error("Malformed extension manifest: {0}")]
-    ExtensionManifestIsNotValidJson(crate::error::structured_file::StructuredFileError),
+    ExtensionManifestIsNotValid(crate::error::structured_file::StructuredFileError),
+
+    #[error("Missing 'extension.json' file for extension '{0}' (exact location: {1}).")]
+    ExtensionManifestMissing(String, std::path::PathBuf),
 
     // errors related to executing extensions
     #[error("Invalid extension name '{0:?}'.")]
     InvalidExtensionName(std::ffi::OsString),
+
+    #[error("Extension's subcommand argument '{0}' is missing description.")]
+    ExtensionSubcommandArgMissingDescription(String),
 
     #[error("Cannot find extension binary at '{0}'.")]
     ExtensionBinaryDoesNotExist(std::path::PathBuf),

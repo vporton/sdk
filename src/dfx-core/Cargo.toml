@@ -17,6 +17,7 @@ candid = { workspace = true, features = ["random"] }
 dialoguer = "0.10.0"
 directories-next.workspace = true
 flate2 = { workspace = true, default-features = false, features = ["zlib-ng"] }
+handlebars.workspace = true
 hex = { workspace = true, features = ["serde"] }
 humantime-serde = "1.1.1"
 ic-agent = { workspace = true, features = ["reqwest"] }
@@ -25,11 +26,12 @@ ic-identity-hsm = { workspace = true }
 k256 = { version = "0.11.4", features = ["pem"] }
 keyring.workspace = true
 lazy_static.workspace = true
+regex.workspace = true
 reqwest.workspace = true
 ring.workspace = true
 schemars.workspace = true
 sec1 = { workspace = true, features = ["std"] }
-semver.workspace = true
+semver = { workspace = true, features = ["serde"] }
 serde.workspace = true
 serde_json.workspace = true
 slog = { workspace = true, features = ["max_level_trace"] }

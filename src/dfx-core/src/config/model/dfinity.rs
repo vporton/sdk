@@ -11,6 +11,7 @@ use crate::error::dfx_config::DfxConfigError::{
     GetCanistersWithDependenciesFailed, GetComputeAllocationFailed, GetFreezingThresholdFailed,
     GetMemoryAllocationFailed, GetRemoteCanisterIdFailed, PullCanistersSameId,
 };
+use crate::error::extension::ExtensionError;
 use crate::error::load_dfx_config::LoadDfxConfigError;
 use crate::error::load_dfx_config::LoadDfxConfigError::{
     DetermineCurrentWorkingDirFailed, LoadFromFileFailed, ResolveConfigPathFailed,
@@ -938,9 +939,13 @@ impl Config {
     }
 
     fn from_slice(path: PathBuf, content: &[u8]) -> Result<Config, StructuredFileError> {
-        let config = serde_json::from_slice(content)
+        let mut json: serde_json::Value = serde_json::from_slice(content)
             .map_err(|e| DeserializeJsonFileFailed(Box::new(path.clone()), e))?;
-        let json = serde_json::from_slice(content)
+        let dfx_version = semver::Version::parse("0.7.0").unwrap(); // TODO get from dfx
+        let extension_manager =
+            crate::extension::manager::ExtensionManager::new(&dfx_version).unwrap();
+        transform_via_extension(&mut json, extension_manager).unwrap(); // TODO
+        let config = serde_json::from_value(json.clone())
             .map_err(|e| DeserializeJsonFileFailed(Box::new(path.clone()), e))?;
         Ok(Config { path, json, config })
     }
@@ -987,6 +992,37 @@ impl Config {
     pub fn save(&self) -> Result<(), StructuredFileError> {
         save_json_file(&self.path, &self.json)
     }
+}
+
+fn transform_via_extension(
+    json: &mut Value,
+    extension_manager: crate::extension::manager::ExtensionManager,
+) -> Result<(), ExtensionError> {
+    if let Some(canisters) = json
+        .get_mut("canisters")
+        .map(|v| v.as_object_mut())
+        .flatten()
+    {
+        for (canister_name, canister_declaration) in canisters.iter_mut() {
+            if let Some(canister_type) = canister_declaration.get("type").cloned() {
+                if !["rust", "motoko", "custom", "asset", "pull"]
+                    .contains(&canister_type.as_str().unwrap_or_default())
+                // TODO
+                {
+                    let canister_type = canister_type.as_str().unwrap_or_default();
+                    let canister_declaration = canister_declaration.as_object_mut().unwrap();
+                    let new = crate::extension::manifest::custom_canister_type::transform(
+                        &extension_manager,
+                        canister_name,
+                        canister_type,
+                        canister_declaration,
+                    )?;
+                    *canister_declaration = new;
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 // grumble grumble https://github.com/serde-rs/serde/issues/2231
