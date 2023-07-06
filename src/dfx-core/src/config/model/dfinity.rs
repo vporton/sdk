@@ -941,7 +941,7 @@ impl Config {
     fn from_slice(path: PathBuf, content: &[u8]) -> Result<Config, StructuredFileError> {
         let mut json: serde_json::Value = serde_json::from_slice(content)
             .map_err(|e| DeserializeJsonFileFailed(Box::new(path.clone()), e))?;
-        let dfx_version = semver::Version::parse("0.7.0").unwrap(); // TODO get from dfx
+        let dfx_version = semver::Version::parse("0.14.2-beta.0+rev16.dirty-62fd79b8").unwrap(); // TODO get from dfx
         let extension_manager =
             crate::extension::manager::ExtensionManager::new(&dfx_version).unwrap();
         transform_via_extension(&mut json, extension_manager).unwrap(); // TODO
@@ -1005,7 +1005,7 @@ fn transform_via_extension(
     {
         for (canister_name, canister_declaration) in canisters.iter_mut() {
             if let Some(canister_type) = canister_declaration.get("type").cloned() {
-                if !["rust", "motoko", "custom", "asset", "pull"]
+                if !["rust", "motoko", "custom", "assets", "pull"]
                     .contains(&canister_type.as_str().unwrap_or_default())
                 // TODO
                 {

@@ -14,7 +14,7 @@ pub(crate) fn transform(
     canister_declaration: &mut serde_json::Map<String, serde_json::Value>,
 ) -> Result<serde_json::Map<String, serde_json::Value>, ExtensionError> {
     let mut split = canister_type.split(':');
-    let extension_name = split.next().unwrap_or_default();
+    let extension_name = split.next().unwrap_or_default(); // TODO
     let canister_type = split.next().unwrap_or_else(|| extension_name);
     if extension_manager.is_extension_installed(extension_name) {
         let manifest = ExtensionManifest::new(extension_name, &extension_manager.dir)?;

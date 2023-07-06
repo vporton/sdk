@@ -13,52 +13,63 @@ teardown() {
     standard_teardown
 }
 
-@test "manually create extension" {
-    assert_command dfx extension list
-    assert_match 'No extensions installed'
+@test "custom canister types" {
+    use_test_specific_cache_root
+    dfx cache install
 
     CACHE_DIR=$(dfx cache show)
-    mkdir -p "$CACHE_DIR"/extensions/test_extension
+    mkdir -p "$CACHE_DIR"/extensions/azle
     echo '#!/usr/bin/env bash
 
-echo testoutput' > "$CACHE_DIR"/extensions/test_extension/test_extension
-    chmod +x "$CACHE_DIR"/extensions/test_extension/test_extension
+echo testoutput' > "$CACHE_DIR"/extensions/azle/azle
+    chmod +x "$CACHE_DIR"/extensions/azle/azle
 
     echo '{
-  "name": "test_extension",
+  "name": "azle",
   "version": "0.1.0",
-  "homepage": "https://github.com/dfinity/dfx-extensions",
-  "authors": "DFINITY",
-  "summary": "Test extension for e2e purposes.",
+  "homepage": "https://github.com/demergent-labs/azle",
+  "authors": "Demergent Labs",
+  "summary": "TypeScript CDK for the Internet Computer",
   "categories": [],
   "keywords": [],
+  "commands": {},
   "canister_types": {
-    "test": {
-      
+    "azle": {
+      "type": "custom",
+      "build": "npx azle {{canister_name}}",
+      "root": "src",
+      "ts": { "replace": { "input": "{{main}}", "search": "(.*).ts", "output": "$1.ts" }},
+      "candid": { "replace": { "input": "{{main}}", "search": "(.*).ts", "output": "$1.did" }},
+      "wasm": ".azle/{{canister_name}}/{{canister_name}}.wasm.gz",
+      "main": { "remove": true }
     }
   }
-
-}' > "$CACHE_DIR"/extensions/test_extension/extension.json
-
-    assert_command dfx --help
-    assert_match "test_extension.*Test extension for e2e purposes."
-
-    assert_command dfx test_extension --help
-    assert_match "Test extension for e2e purposes..*Usage: dfx test_extension"
+}' > "$CACHE_DIR"/extensions/azle/manifest.json
 
     assert_command dfx extension list
-    assert_match "test_extension"
+    assert_match "azle"
 
-    assert_command dfx extension run test_extension
-    assert_match "testoutput"
+    npx --yes azle new hello
+    cd hello
 
-    assert_command dfx test_extension
-    assert_match "testoutput"
+    echo '{
+  "canisters": {
+      "hello_world": {
+          "type": "azle",
+          "main": "src/index.ts"
+      }
+  },
+  "defaults": {
+    "build": {
+      "args": "",
+      "packtool": ""
+    }
+  },
+  "output_env_file": ".env",
+  "version": 1
+}' > dfx.json
 
-    assert_command dfx extension uninstall test_extension
-    # TODO: how to capture spinner message?
-    # assert_match 'Successfully uninstalled extension'
-
-    assert_command dfx extension list
+    dfx_start
+    assert_command dfx deploy -v
     assert_match 'No extensions installed'
 }
