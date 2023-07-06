@@ -922,26 +922,40 @@ impl Config {
         Ok(None)
     }
 
-    fn from_file(path: &Path) -> Result<Config, StructuredFileError> {
+    fn from_file(
+        path: &Path,
+        dfx_version: &semver::Version,
+    ) -> Result<Config, StructuredFileError> {
         let content = crate::fs::read(path).map_err(ReadJsonFileFailed)?;
-        Config::from_slice(path.to_path_buf(), &content)
+        Config::from_slice(path.to_path_buf(), &content, dfx_version)
     }
 
-    pub fn from_dir(working_dir: &Path) -> Result<Option<Config>, LoadDfxConfigError> {
+    pub fn from_dir(
+        working_dir: &Path,
+        dfx_version: &semver::Version,
+    ) -> Result<Option<Config>, LoadDfxConfigError> {
         let path = Config::resolve_config_path(working_dir)?;
-        path.map(|path| Config::from_file(&path))
+        path.map(|path| Config::from_file(&path, dfx_version))
             .transpose()
             .map_err(LoadFromFileFailed)
     }
 
-    pub fn from_current_dir() -> Result<Option<Config>, LoadDfxConfigError> {
-        Config::from_dir(&std::env::current_dir().map_err(DetermineCurrentWorkingDirFailed)?)
+    pub fn from_current_dir(
+        dfx_version: &semver::Version,
+    ) -> Result<Option<Config>, LoadDfxConfigError> {
+        Config::from_dir(
+            &std::env::current_dir().map_err(DetermineCurrentWorkingDirFailed)?,
+            dfx_version,
+        )
     }
 
-    fn from_slice(path: PathBuf, content: &[u8]) -> Result<Config, StructuredFileError> {
+    fn from_slice(
+        path: PathBuf,
+        content: &[u8],
+        dfx_version: &semver::Version,
+    ) -> Result<Config, StructuredFileError> {
         let mut json: serde_json::Value = serde_json::from_slice(content)
             .map_err(|e| DeserializeJsonFileFailed(Box::new(path.clone()), e))?;
-        let dfx_version = semver::Version::parse("0.14.2-beta.0+rev16.dirty-62fd79b8").unwrap(); // TODO get from dfx
         let extension_manager =
             crate::extension::manager::ExtensionManager::new(&dfx_version).unwrap();
         transform_via_extension(&mut json, extension_manager).unwrap(); // TODO
@@ -952,16 +966,20 @@ impl Config {
 
     /// Create a configuration from a string.
     #[cfg(test)]
-    pub(crate) fn from_str(content: &str) -> Result<Config, StructuredFileError> {
-        Config::from_slice(PathBuf::from("-"), content.as_bytes())
+    pub(crate) fn from_str(
+        content: &str,
+        dfx_version: &semver::Version,
+    ) -> Result<Config, StructuredFileError> {
+        Config::from_slice(PathBuf::from("-"), content.as_bytes(), dfx_version)
     }
 
     #[cfg(test)]
     pub(crate) fn from_str_and_path(
         path: PathBuf,
         content: &str,
+        dfx_version: &semver::Version,
     ) -> Result<Config, StructuredFileError> {
-        Config::from_slice(path, content.as_bytes())
+        Config::from_slice(path, content.as_bytes(), dfx_version)
     }
 
     pub fn get_path(&self) -> &PathBuf {
@@ -1210,6 +1228,7 @@ mod tests {
                 }
             }
         }"#,
+            &semver::Version::new(0, 0, 0),
         )
         .unwrap();
 
@@ -1232,6 +1251,7 @@ mod tests {
                 }
             }
         }"#,
+            &semver::Version::new(0, 0, 0),
         )
         .unwrap();
 
@@ -1253,6 +1273,7 @@ mod tests {
                 }
             }
         }"#,
+            &semver::Version::new(0, 0, 0),
         )
         .unwrap();
 
@@ -1275,6 +1296,7 @@ mod tests {
                 }
             }
         }"#,
+            &semver::Version::new(0, 0, 0),
         )
         .unwrap();
 
@@ -1307,6 +1329,7 @@ mod tests {
                 }
               }
         }"#,
+            &semver::Version::new(0, 0, 0),
         )
         .unwrap();
 
@@ -1330,6 +1353,7 @@ mod tests {
                 }
               }
         }"#,
+            &semver::Version::new(0, 0, 0),
         )
         .unwrap();
         let config_interface = config_no_values.get_config();
