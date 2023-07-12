@@ -28,4 +28,5 @@ sha2.workspace = true
 
 [dev-dependencies]
 candid = { workspace = true, features = ["parser"] }
+ic-crypto-tree-hash = { git = "https://github.com/dfinity/ic.git", rev = "a533346f63f4091eb64692891de0d5b2ffd5b22a"  }
 

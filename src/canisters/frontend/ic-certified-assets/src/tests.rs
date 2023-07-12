@@ -9,6 +9,7 @@ use crate::types::{
     ComputeEvidenceArguments, CreateAssetArguments, CreateChunkArg, DeleteAssetArguments,
     DeleteBatchArguments, SetAssetContentArguments, SetAssetPropertiesArguments,
 };
+use ic_crypto_tree_hash::Digest;
 use crate::url_decode::{url_decode, UrlDecodeError};
 use candid::Principal;
 use serde_bytes::ByteBuf;
@@ -119,6 +120,8 @@ impl RequestBuilder {
 }
 
 fn create_assets(state: &mut State, time_now: u64, assets: Vec<AssetBuilder>) -> BatchId {
+    let digest = Digest(state.root_hash());
+
     let batch_id = state.create_batch(time_now).unwrap();
 
     let operations =
