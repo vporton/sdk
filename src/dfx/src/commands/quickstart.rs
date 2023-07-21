@@ -11,6 +11,7 @@ use num_traits::Inv;
 use rust_decimal::Decimal;
 use tokio::runtime::Runtime;
 
+use crate::lib::operations::cmc::MEMO_CREATE_CANISTER;
 use crate::{
     lib::{
         agent::create_agent_environment,
@@ -30,7 +31,6 @@ use crate::{
     },
     util::assets::wallet_wasm,
 };
-use crate::lib::operations::cmc::MEMO_CREATE_CANISTER;
 
 /// Use the `dfx quickstart` command to perform initial one time setup for your identity and/or wallet. This command
 /// can be run anytime to repeat the setup process or to be used as an informational command, printing

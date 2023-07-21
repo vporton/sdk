@@ -130,7 +130,8 @@ pub fn exec(env: &dyn Environment, opts: DeployOpts) -> DfxResult {
 
     let using_icp = opts.using_icp_amount;
     let with_cycles = opts.with_cycles;
-    let no_wallet = opts.no_wallet || opts.specified_id.is_some() || opts.using_icp_amount.is_some();
+    let no_wallet =
+        opts.no_wallet || opts.specified_id.is_some() || opts.using_icp_amount.is_some();
 
     let deploy_mode = match (mode, canister_name) {
         (Some(InstallMode::Reinstall), Some(canister_name)) => {

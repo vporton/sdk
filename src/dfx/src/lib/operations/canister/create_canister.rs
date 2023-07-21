@@ -5,7 +5,9 @@ use dfx_core::canister::build_wallet_canister;
 use dfx_core::identity::CallSender;
 use dfx_core::network::provider::get_network_context;
 
+use crate::lib::ledger_types::{Memo, NotifyError};
 use crate::lib::nns_types::icpts::{ICPTs, TRANSACTION_FEE};
+use crate::lib::operations::cmc::{notify_create, transfer_cmc, MEMO_CREATE_CANISTER};
 use anyhow::{anyhow, bail, Context};
 use candid::Principal;
 use fn_error_context::context;
@@ -15,8 +17,6 @@ use ic_agent::{Agent, AgentError};
 use ic_utils::interfaces::ManagementCanister;
 use slog::info;
 use std::format;
-use crate::lib::ledger_types::{Memo, NotifyError};
-use crate::lib::operations::cmc::{MEMO_CREATE_CANISTER, notify_create, transfer_cmc};
 
 // The cycle fee for create request is 0.1T cycles.
 const CANISTER_CREATE_FEE: u128 = 100_000_000_000_u128;
@@ -125,7 +125,7 @@ async fn create_with_ledger(
         to_principal,
         created_at_time,
     )
-        .await?;
+    .await?;
     println!("Using transfer at block height {height}");
 
     let controller = to_principal;
@@ -138,9 +138,9 @@ async fn create_with_ledger(
             Ok(principal)
         }
         Err(NotifyError::Refunded {
-                reason,
-                block_index,
-            }) => {
+            reason,
+            block_index,
+        }) => {
             match block_index {
                 Some(height) => {
                     println!("Refunded at block height {height} with message: {reason}")
