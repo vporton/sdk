@@ -29,6 +29,17 @@ current_time_nanoseconds() {
     echo "$(date +%s)"000000000
 }
 
+@test "deploy --using-icp-amount" {
+    dfx identity use alice
+    dfx ledger balance
+    dfx ledger account-id
+    dfx_new
+    assert_command dfx deploy --using-icp-amount 1
+    assert_contains "Using transfer at block height" # todo
+    assert_command dfx ledger balance
+    assert_eq "999999997.99980000 ICP"
+}
+
 @test "ledger account-id" {
     dfx identity use alice
     assert_command dfx ledger account-id

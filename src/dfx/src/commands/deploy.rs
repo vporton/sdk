@@ -105,6 +105,7 @@ pub struct DeployOpts {
     /// ICP to mint into cycles and deposit into destination canister
     /// Can be specified as a Decimal with the fractional portion up to 8 decimal places
     /// i.e. 100.012
+    /// This option implies the --no-wallet flag.
     #[arg(long, conflicts_with("with_cycles"))]
     using_icp_amount: Option<ICPTs>,
 }
@@ -127,7 +128,9 @@ pub fn exec(env: &dyn Environment, opts: DeployOpts) -> DfxResult {
         .output_env_file
         .or_else(|| config.get_config().output_env_file.clone());
 
+    let using_icp = opts.using_icp_amount;
     let with_cycles = opts.with_cycles;
+    let no_wallet = opts.no_wallet || opts.specified_id.is_some() || opts.using_icp_amount.is_some();
 
     let deploy_mode = match (mode, canister_name) {
         (Some(InstallMode::Reinstall), Some(canister_name)) => {
@@ -175,10 +178,11 @@ pub fn exec(env: &dyn Environment, opts: DeployOpts) -> DfxResult {
         argument_type,
         &deploy_mode,
         opts.upgrade_unchanged,
+        using_icp,
         with_cycles,
         opts.specified_id,
         &call_sender,
-        opts.no_wallet,
+        no_wallet,
         opts.yes,
         env_file,
         !opts.no_asset_upgrade,

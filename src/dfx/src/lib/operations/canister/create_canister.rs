@@ -5,6 +5,7 @@ use dfx_core::canister::build_wallet_canister;
 use dfx_core::identity::CallSender;
 use dfx_core::network::provider::get_network_context;
 
+use crate::lib::nns_types::icpts::{ICPTs, TRANSACTION_FEE};
 use anyhow::{anyhow, bail, Context};
 use candid::Principal;
 use fn_error_context::context;
@@ -14,6 +15,8 @@ use ic_agent::{Agent, AgentError};
 use ic_utils::interfaces::ManagementCanister;
 use slog::info;
 use std::format;
+use crate::lib::ledger_types::{Memo, NotifyError};
+use crate::lib::operations::cmc::{MEMO_CREATE_CANISTER, notify_create, transfer_cmc};
 
 // The cycle fee for create request is 0.1T cycles.
 const CANISTER_CREATE_FEE: u128 = 100_000_000_000_u128;
@@ -25,6 +28,7 @@ const CANISTER_INITIAL_CYCLE_BALANCE: u128 = 3_000_000_000_000_u128;
 pub async fn create_canister(
     env: &dyn Environment,
     canister_name: &str,
+    using_icp: Option<ICPTs>,
     with_cycles: Option<u128>,
     specified_id: Option<Principal>,
     call_sender: &CallSender,
@@ -72,12 +76,18 @@ pub async fn create_canister(
     let agent = env
         .get_agent()
         .ok_or_else(|| anyhow!("Cannot get HTTP client from environment."))?;
-    let cid = match call_sender {
-        CallSender::SelectedId => {
+    let cid = match (call_sender, using_icp) {
+        (CallSender::SelectedId, Some(using_icp)) => {
+            create_with_ledger(env, agent, using_icp, settings).await
+        }
+        (CallSender::SelectedId, None) => {
             create_with_management_canister(env, agent, with_cycles, specified_id, settings).await
         }
-        CallSender::Wallet(wallet_id) => {
+        (CallSender::Wallet(wallet_id), None) => {
             create_with_wallet(agent, wallet_id, with_cycles, settings).await
+        }
+        (CallSender::Wallet(_), Some(_)) => {
+            unreachable!("Cannot create canister with wallet and ICP at the same time.")
         }
     }?;
     let canister_id = cid.to_text();
@@ -91,6 +101,56 @@ pub async fn create_canister(
     canister_id_store.add(canister_name, &canister_id)?;
 
     Ok(())
+}
+
+async fn create_with_ledger(
+    env: &dyn Environment,
+    agent: &Agent,
+    using_icp: ICPTs,
+    settings: CanisterSettings,
+) -> DfxResult<Principal> {
+    let to_principal = agent.get_principal().unwrap();
+    let fee = TRANSACTION_FEE;
+    let memo = Memo(MEMO_CREATE_CANISTER);
+    let amount = using_icp;
+    let from_subaccount = None;
+    let created_at_time = None;
+    let subnet_type = None;
+    let height = transfer_cmc(
+        agent,
+        memo,
+        amount,
+        fee,
+        from_subaccount,
+        to_principal,
+        created_at_time,
+    )
+        .await?;
+    println!("Using transfer at block height {height}");
+
+    let controller = to_principal;
+
+    let result = notify_create(agent, controller, height, subnet_type).await?;
+
+    match result {
+        Ok(principal) => {
+            println!("Canister created with id: {:?}", principal.to_text());
+            Ok(principal)
+        }
+        Err(NotifyError::Refunded {
+                reason,
+                block_index,
+            }) => {
+            match block_index {
+                Some(height) => {
+                    println!("Refunded at block height {height} with message: {reason}")
+                }
+                None => println!("Refunded with message: {reason}"),
+            };
+            bail!("Refunded with message: {reason}")
+        }
+        Err(other) => bail!("{other:?}"),
+    }
 }
 
 async fn create_with_management_canister(

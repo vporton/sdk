@@ -16,6 +16,7 @@ use dfx_core::config::model::canister_id_store::CanisterIdStore;
 use dfx_core::config::model::dfinity::Config;
 use dfx_core::identity::CallSender;
 
+use crate::lib::nns_types::icpts::ICPTs;
 use anyhow::{anyhow, bail, Context};
 use candid::Principal;
 use fn_error_context::context;
@@ -43,6 +44,7 @@ pub async fn deploy_canisters(
     argument_type: Option<&str>,
     deploy_mode: &DeployMode,
     upgrade_unchanged: bool,
+    using_icp: Option<ICPTs>,
     with_cycles: Option<u128>,
     specified_id: Option<Principal>,
     call_sender: &CallSender,
@@ -125,6 +127,7 @@ pub async fn deploy_canisters(
             env,
             &canisters_to_load,
             &initial_canister_id_store,
+            using_icp,
             with_cycles,
             specified_id,
             create_call_sender,
@@ -195,6 +198,7 @@ async fn register_canisters(
     env: &dyn Environment,
     canister_names: &[String],
     canister_id_store: &CanisterIdStore,
+    using_icp: Option<ICPTs>,
     with_cycles: Option<u128>,
     specified_id: Option<Principal>,
     call_sender: &CallSender,
@@ -236,6 +240,7 @@ async fn register_canisters(
         create_canister(
             env,
             canister_name,
+            using_icp,
             with_cycles,
             specified_id,
             call_sender,

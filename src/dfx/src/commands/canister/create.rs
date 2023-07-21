@@ -163,6 +163,7 @@ pub async fn exec(
         create_canister(
             env,
             canister_name,
+            None,
             with_cycles,
             opts.specified_id,
             call_sender,
@@ -222,6 +223,7 @@ pub async fn exec(
                 create_canister(
                     env,
                     canister_name,
+                    None,
                     with_cycles,
                     None,
                     call_sender,
