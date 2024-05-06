@@ -11,10 +11,12 @@ Read only those `--print-deps` dependencies that are necessary to read.
 Don't compile canisters for which all dependencies are elder than the `.wasm` file.
 This results in big compilation speedups.
 
+
 ### feat: specify canisters not to deploy
 
 `"deploy": false` canister option makes it not to deploy, unless explicitly specified on the command line.
 
+<<<<<<< HEAD
 # 0.20.1
 
 ### feat: reformatted error output
@@ -55,6 +57,8 @@ Stderr:
 ### fix: "Failed to decrypt PEM file" errors messages will now include the cause
 >>>>>>> upstream/master
 
+=======
+>>>>>>> dont-deploy
 ### feat: WASM memory soft-limit
 
 Adds support for the `wasm_memory_limit` canister setting, which limits the canister's heap during most calls but does not affect queries. As with other canister settings, it can be set in `dfx canister create` or `dfx canister update-settings` via the `--wasm-memory-limit` flag, as well as in `dfx.json` under `canisters[].initialization_values.wasm_memory_limit`.
