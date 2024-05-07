@@ -83,7 +83,7 @@ pub async fn deploy_canisters(
         .get_config()
         .get_canister_names_with_dependencies(some_canister)?;
     let canisters_to_load = add_canisters_with_ids(&required_canisters, env, &config);
-    
+
     let canister_pool = CanisterPool::load(env, false, &canisters_to_load)?;
 
     let toplevel_canisters = match deploy_mode {
@@ -119,30 +119,26 @@ pub async fn deploy_canisters(
         })
         // .map(|v| &v)
         .try_collect::<Arc<Canister>, Vec<Arc<Canister>>, _>()?;
-    let toplevel_canisters: &[Arc<Canister>] = &toplevel_canisters;
+    let toplevel_canisters: &[Arc<Canister>] = &toplevel_canisters; // FIXME: Wrong order
 
     // TODO: `build_order` is called two times during deployment of a new canister.
     let order = canister_pool.build_order(env, toplevel_canisters)?;
-    let order_names: Vec<String> = order
+    let order_canisters = order
         .iter()
-        .map(|name| {
-            canister_pool
-                .get_first_canister_with_name(name)
-                .unwrap()
-                .get_name()
-                .to_owned()
-        })
-        .collect();
+        .map(|name| canister_pool.get_first_canister_with_name(name).unwrap())
+        .collect::<Vec<_>>();
 
-    let canisters_to_install: &Vec<String> = &order_names
+    // Run this before calculating `canisters_to_install` to obtain canisters config.
+    let _new_canister_pool = CanisterPool::load(env, false, &order)?; // with newly registered canisters
+
+    let canisters_to_install: &Vec<String> = &order
         .clone()
         .into_iter()
         .filter(|canister_name| {
             !pull_canisters_in_config.contains_key(canister_name)
-                && (some_canister == Some(canister_name) || // do deploy a canister that was explicitly specified
-                    // TODO: This is a hack.
+                && //(some_canister == Some(canister_name) || // do deploy a canister that was explicitly specified
                     config.get_config().get_canister_config(canister_name).map_or(
-                        true, |canister_config| canister_config.deploy))
+                        true, |canister_config| canister_config.deploy)
         })
         .collect();
 
@@ -173,15 +169,17 @@ pub async fn deploy_canisters(
     } else {
         info!(env.get_logger(), "All canisters have already been created.");
     }
-    let new_canister_pool = CanisterPool::load(env, false, &canisters_to_load)?; // with newly registered canisters
+
+    // hack to load deployed canister IDs (such as of Rust canisters)
+    let new_canister_pool2 = CanisterPool::load(env, false, &order)?; // with newly registered canisters
 
     build_canisters(
         env,
-        // &order_names,
-        toplevel_canisters,
+        order_canisters.as_slice(),
+        // toplevel_canisters,
         &config,
         env_file.clone(),
-        &new_canister_pool,
+        &new_canister_pool2,
     )
     .await?;
 
@@ -198,7 +196,7 @@ pub async fn deploy_canisters(
                 force_reinstall,
                 upgrade_unchanged,
                 call_sender,
-                new_canister_pool,
+                new_canister_pool2,
                 skip_consent,
                 env_file.as_deref(),
                 no_asset_upgrade,
@@ -208,8 +206,7 @@ pub async fn deploy_canisters(
             info!(log, "Deployed canisters.");
         }
         PrepareForProposal(canister_name) => {
-            prepare_assets_for_commit(env, &canister_id_store, &config, canister_name)
-                .await?
+            prepare_assets_for_commit(env, &canister_id_store, &config, canister_name).await?
         }
         ComputeEvidence(canister_name) => {
             compute_evidence(env, &canister_id_store, &config, canister_name).await?
