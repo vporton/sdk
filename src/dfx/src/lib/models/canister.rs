@@ -792,7 +792,7 @@ impl CanisterPool {
         // TODO: The following `map` is a hack.
         for canister in &self.canister_dependencies(&[&canister]) {
             let idl_root = &build_config.idl_root;
-            let canister_id = canister.canister_id(); // FIXME: Apparently, backtraces on `deploy: false` dependency.
+            let canister_id = canister.canister_id();
             let idl_file_path = idl_root.join(canister_id.to_text()).with_extension("did");
 
             // Ignore errors (e.g. File Not Found).
