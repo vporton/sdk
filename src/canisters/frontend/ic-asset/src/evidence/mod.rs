@@ -1,5 +1,5 @@
 use crate::asset::content::Content;
-use crate::asset::content_encoder::ContentEncoder::Gzip;
+use crate::asset::content_encoder::ContentEncoder::{Brotli, Gzip};
 use crate::batch_upload::operations::assemble_batch_operations;
 use crate::batch_upload::operations::AssetDeletionReason::Obsolete;
 use crate::batch_upload::plumbing::{make_project_assets, ProjectAsset};
@@ -13,11 +13,11 @@ use crate::canister_api::types::batch_upload::common::{
 use crate::canister_api::types::batch_upload::v1::BatchOperationKind;
 use crate::error::ComputeEvidenceError;
 use crate::error::HashContentError;
-use crate::error::HashContentError::{EncodeContentFailed, LoadContentFailed};
+use crate::error::HashContentError::EncodeContentFailed;
 use crate::sync::gather_asset_descriptors;
 use ic_utils::Canister;
 use sha2::{Digest, Sha256};
-use slog::{info, Logger};
+use slog::{info, trace, Logger};
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
@@ -59,12 +59,16 @@ pub async fn compute_evidence(
         make_project_assets(None, asset_descriptors, &canister_assets, logger).await?;
 
     let mut operations = assemble_batch_operations(
+        None,
         &project_assets,
         canister_assets,
         Obsolete,
         canister_asset_properties,
-    );
+    )
+    .await
+    .map_err(ComputeEvidenceError::AssembleCommitBatchArgumentFailed)?;
     operations.sort();
+    trace!(logger, "{:#?}", operations);
 
     let mut sha = Sha256::new();
     for op in operations {
@@ -122,15 +126,16 @@ fn hash_set_asset_content(
     let ad = &project_asset.asset_descriptor;
 
     let content = {
-        let identity = Content::load(&ad.source).map_err(LoadContentFailed)?;
-        if args.content_encoding == "identity" {
-            identity
-        } else if args.content_encoding == "gzip" {
-            identity
+        let identity = Content::load(&ad.source)?;
+        match args.content_encoding.as_str() {
+            "identity" => identity,
+            "br" | "brotli" => identity
+                .encode(&Brotli)
+                .map_err(|e| EncodeContentFailed(ad.key.clone(), Brotli, e))?,
+            "gzip" => identity
                 .encode(&Gzip)
-                .map_err(|e| EncodeContentFailed(ad.key.clone(), Gzip, e))?
-        } else {
-            unreachable!("unhandled content encoder");
+                .map_err(|e| EncodeContentFailed(ad.key.clone(), Gzip, e))?,
+            _ => unreachable!("unhandled content encoder"),
         }
     };
     hasher.update(&content.data);

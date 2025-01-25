@@ -710,19 +710,14 @@ check_permission_failure() {
   dfx canister  call --query e2e_project_frontend list '(record {})'
 
   # decode as expected
-  assert_command dfx canister call --query e2e_project_frontend http_request '(record{url="/%e6";headers=vec{};method="GET";body=vec{}})'
+  assert_command dfx canister call --query e2e_project_frontend http_request '(record{url="/%c3%a6";headers=vec{};method="GET";body=vec{}})'
   assert_match "filename is an ae symbol" # candid looks like blob "filename is \c3\a6\0a"
 
   ID=$(dfx canister id e2e_project_frontend)
   PORT=$(get_webserver_port)
 
-  # fails with Err(InvalidExpressionPath)
-  assert_command_fail curl --fail -vv http://localhost:"$PORT"/%c3%a6?canisterId="$ID"
-
-  # fails with Err(Utf8ConversionError(FromUtf8Error { bytes: [47, 230], error: Utf8Error { valid_up_to: 1, error_len: None } }))
+  # fails with because %e6 is not valid utf-8 percent encoding
   assert_command_fail curl --fail -vv http://localhost:"$PORT"/%e6?canisterId="$ID"
-  # assert_match "200 OK" "$stderr"
-  # assert_match "filename is an ae symbol"
   assert_contains "500 Internal Server Error"
 }
 
@@ -751,7 +746,7 @@ check_permission_failure() {
   assert_match "contents of file with plus in filename"
   assert_command dfx canister call --query e2e_project_frontend http_request '(record{url="/has%25percent.txt";headers=vec{};method="GET";body=vec{}})'
   assert_match "contents of file with percent in filename"
-  assert_command dfx canister call --query e2e_project_frontend http_request '(record{url="/%e6";headers=vec{};method="GET";body=vec{}})'
+  assert_command dfx canister call --query e2e_project_frontend http_request '(record{url="/%c3%a6";headers=vec{};method="GET";body=vec{}})'
   assert_match "filename is an ae symbol" # candid looks like blob "filename is \c3\a6\0a"
   assert_command dfx canister call --query e2e_project_frontend http_request '(record{url="/%25";headers=vec{};method="GET";body=vec{}})'
   assert_match "filename is percent"
@@ -792,11 +787,8 @@ check_permission_failure() {
   assert_match "contents of file with percent in filename"
 
   assert_command_fail curl --fail -vv http://localhost:"$PORT"/%e6?canisterId="$ID"
-  # see https://dfinity.atlassian.net/browse/SDK-1247
-  # fails with Err(Utf8ConversionError(FromUtf8Error { bytes: [47, 230], error: Utf8Error { valid_up_to: 1, error_len: None } }))
+  # fails because %e6 is not valid utf-8 percent encoding
   assert_contains "500 Internal Server Error"
-  # assert_match "200 OK" "$stderr"
-  # assert_match "filename is an ae symbol"
 
   assert_command curl --fail -vv http://localhost:"$PORT"/%25?canisterId="$ID"
   assert_match "200 OK" "$stderr"
@@ -840,6 +832,41 @@ check_permission_failure() {
   assert_command curl -v --output encoded-compressed-2.gz -H "Accept-Encoding: gzip, deflate, br" http://localhost:"$PORT"/notreally.js?canisterId="$ID"
   assert_match "content-encoding: gzip"
   gunzip encoded-compressed-2.gz
+  diff encoded-compressed-2 src/e2e_project_frontend/assets/notreally.js
+}
+
+@test "can use brotli compression" {
+  install_asset assetscanister
+  for i in $(seq 1 400); do
+    echo "some easily duplicate text $i" >>src/e2e_project_frontend/assets/notreally.js
+  done
+
+  echo '[{
+      "match": "*.js",
+      "encodings": ["identity", "br"]
+    }
+  ]' > src/e2e_project_frontend/assets/.ic-assets.json5
+
+  dfx_start
+  assert_command dfx deploy
+  dfx canister call --query e2e_project_frontend list '(record{})'
+
+  ID=$(dfx canister id e2e_project_frontend)
+  PORT=$(get_webserver_port)
+
+  assert_command curl -v --output not-compressed http://localhost:"$PORT"/notreally.js?canisterId="$ID"
+  assert_not_match "content-encoding:"
+  diff not-compressed src/e2e_project_frontend/assets/notreally.js
+
+  assert_command curl -v --output encoded-compressed-1.br -H "Accept-Encoding: br" http://localhost:"$PORT"/notreally.js?canisterId="$ID"
+  assert_match "content-encoding: br"
+  brotli --decompress encoded-compressed-1.br
+  diff encoded-compressed-1 src/e2e_project_frontend/assets/notreally.js
+
+  # should split up accept-encoding lines with more than one encoding
+  assert_command curl -v --output encoded-compressed-2.br -H "Accept-Encoding: br, deflate, gzip" http://localhost:"$PORT"/notreally.js?canisterId="$ID"
+  assert_match "content-encoding: br"
+  brotli --decompress encoded-compressed-2.br
   diff encoded-compressed-2 src/e2e_project_frontend/assets/notreally.js
 }
 
@@ -1312,6 +1339,187 @@ EOF
   assert_match "etag: my-custom-etag"
 }
 
+@test "asset configuration via .ic-assets.json5 - security policy" {
+  install_asset assetscanister
+  touch src/e2e_project_frontend/assets/thing.json
+  touch src/e2e_project_frontend/assets/thing2.json
+
+  dfx_start
+  dfx canister create --all
+  ID=$(dfx canister id e2e_project_frontend)
+  PORT=$(get_webserver_port)
+
+  # No security policy defined, warning not disabled
+  echo '[]' > src/e2e_project_frontend/assets/.ic-assets.json5
+
+  assert_command dfx deploy
+  assert_contains "This project does not define a security policy for some assets."
+  assert_contains "Assets without any security policy: all"
+  assert_command curl --fail --head "http://localhost:$PORT/thing.json?canisterId=$ID"
+  assert_not_match "content-security-policy"
+  assert_not_match "permissions-policy"
+
+  # No security policy defined, warning disabled for one asset
+  echo '[
+    {
+      "match": "thing.json",
+      "disable_security_policy_warning": true
+    }
+  ]' > src/e2e_project_frontend/assets/.ic-assets.json5
+
+  assert_command dfx deploy
+  assert_contains "This project does not define a security policy for some assets."
+  assert_contains "Assets without any security policy:"
+  assert_contains "- /thing2.json"
+  assert_not_contains "- /thing.json"
+  assert_command curl --fail --head "http://localhost:$PORT/thing.json?canisterId=$ID"
+  assert_not_match "content-security-policy"
+  assert_not_match "permissions-policy"
+
+  # No security policy defined, warning disabled for all assets
+  echo '[
+    {
+      "match": "**/*",
+      "disable_security_policy_warning": true
+    }
+  ]' > src/e2e_project_frontend/assets/.ic-assets.json5
+
+  assert_command dfx deploy
+  assert_not_contains "This project does not define a security policy for some assets."
+  assert_command curl --fail --head "http://localhost:$PORT/thing.json?canisterId=$ID"
+  assert_not_match "content-security-policy"
+  assert_not_match "permissions-policy"
+
+  # Security policy "disabled" defined for all assets, which disables the warning
+  echo '[
+    {
+      "match": "**/*",
+      "security_policy": "disabled"
+    }
+  ]' > src/e2e_project_frontend/assets/.ic-assets.json5
+
+  assert_command dfx deploy
+  assert_not_contains "This project does not define a security policy for some assets."
+  assert_not_contains "This project uses the default security policy for some assets."
+  assert_command curl --fail --head "http://localhost:$PORT/thing.json?canisterId=$ID"
+  assert_not_match "content-security-policy"
+  assert_not_match "permissions-policy"
+
+  # Security policy "standard" defined for all assets, warning not disabled
+  echo '[
+    {
+      "match": "**/*",
+      "security_policy": "standard"
+    }
+  ]' > src/e2e_project_frontend/assets/.ic-assets.json5
+
+  assert_command dfx deploy
+  assert_contains "This project uses the default security policy for some assets."
+  assert_contains "Unhardened assets: all"
+  assert_command curl --fail --head "http://localhost:$PORT/thing.json?canisterId=$ID"
+  assert_match "content-security-policy"
+  assert_match "permissions-policy"
+
+  # Security policy "standard" defined for all assets, warning disabled for one asset
+  echo '[
+    {
+      "match": "**/*",
+      "security_policy": "standard"
+    },
+    {
+      "match": "thing.json",
+      "disable_security_policy_warning": true
+    }
+  ]' > src/e2e_project_frontend/assets/.ic-assets.json5
+
+  assert_command dfx deploy
+  assert_contains "This project uses the default security policy for some assets."
+  assert_contains "Unhardened assets:"
+  assert_contains "- /thing2.json"
+  assert_not_contains "- /thing.json"
+  assert_command curl --fail --head "http://localhost:$PORT/thing.json?canisterId=$ID"
+  assert_match "content-security-policy"
+  assert_match "permissions-policy"
+
+  # Security policy "standard" defined for all assets, warning disabled for all assets
+  echo '[
+    {
+      "match": "**/*",
+      "security_policy": "standard",
+      "disable_security_policy_warning": true
+    }
+  ]' > src/e2e_project_frontend/assets/.ic-assets.json5
+
+  assert_command dfx deploy
+  assert_not_contains "This project uses the default security policy for some assets."
+  assert_command curl --fail --head "http://localhost:$PORT/thing.json?canisterId=$ID"
+  assert_match "content-security-policy"
+  assert_match "permissions-policy"
+
+  # Security policy "hardened" defined for all assets but no custom headers results in an error
+  echo '[
+    {
+      "match": "**/*",
+      "security_policy": "hardened"
+    }
+  ]' > src/e2e_project_frontend/assets/.ic-assets.json5
+
+  assert_command_fail dfx deploy
+  assert_contains "does not actually configure any custom improvements over the standard policy"
+
+  # Security policy "hardened" defined for all assets, with overwiting default security headers
+  echo '[
+    {
+      "match": "**/*",
+      "security_policy": "hardened",
+      "headers": {
+        "content-security-policy": "overwritten"
+      }
+    }
+  ]' > src/e2e_project_frontend/assets/.ic-assets.json5
+
+  assert_command dfx deploy
+  assert_not_contains "This project does not define a security policy for some assets."
+  assert_not_contains "This project uses the default security policy for some assets."
+  assert_command curl --fail --head "http://localhost:$PORT/thing.json?canisterId=$ID"
+  assert_match "content-security-policy: overwritten"
+  assert_match "permissions-policy"
+}
+
+@test "asset configuration via .ic-assets.json5 - overwriting default encodings" {
+  dfx_new_frontend
+
+  dfx_start
+
+  echo '[
+    {
+      "match": "favicon.ico",
+      "encodings": ["gzip"]
+    },
+    {
+      "match": "index.html",
+      "encodings": ["identity"]
+    }
+  ]' > src/e2e_project_frontend/assets/.ic-assets.json5
+
+  dfx deploy
+
+  ID=$(dfx canister id e2e_project_frontend)
+  PORT=$(get_webserver_port)
+
+  dfx canister call e2e_project_frontend list '(record{})'
+
+  # favicon.ico is not available in gzip format by default but was configured to be
+  assert_command curl -vv -H "Accept-Encoding: gzip" "http://localhost:$PORT/favicon.ico?canisterId=$ID"
+  assert_match "content-encoding: gzip"
+
+  # index.html is available in gzip format by default but was configured not to be
+  # The asset canister would serve the gzip encoding if it was available, but can't.
+  # Therefore it falls back to the identity encoding, meaning there is no `content-encoding` header present
+  assert_command curl -vv -H "Accept-Encoding: gzip" "http://localhost:$PORT/index.html?canisterId=$ID"
+  assert_not_match "content-encoding"
+}
+
 @test "aliasing rules: <filename> to <filename>.html or <filename>/index.html" {
   echo "test alias file" >'src/e2e_project_frontend/assets/test_alias_file.html'
   mkdir 'src/e2e_project_frontend/assets/index_test'
@@ -1778,6 +1986,38 @@ WARN: {
 
   assert_command      dfx canister call e2e_project_frontend configure '(record { max_chunks=opt opt 3; max_bytes = opt opt 5500 })'
   assert_command      dfx deploy
+}
+
+@test "set permissions through init argument" {
+  dfx_start
+  dfx deploy
+
+  dfx identity new alice --storage-mode plaintext
+  ALICE="$(dfx --identity alice identity get-principal)"
+
+  dfx canister install e2e_project_frontend --mode reinstall --yes --argument "(opt variant {
+    Init = record {
+      set_permissions = opt record {
+        prepare = vec {
+          principal \"${ALICE}\";
+        };
+        commit = vec {
+          principal \"$(dfx identity get-principal)\";
+          principal \"aaaaa-aa\";
+        };
+        manage_permissions = vec {
+          principal \"$(dfx identity get-principal)\";
+        };
+      }
+    }
+  })"
+  assert_command dfx canister call e2e_project_frontend list_permitted '(record { permission = variant { Prepare }; })'
+  assert_match "${ALICE}"
+  assert_command dfx canister call e2e_project_frontend list_permitted '(record { permission = variant { Commit }; })'
+  assert_match "$(dfx identity get-principal)"
+  assert_match '"aaaaa-aa"'
+  assert_command dfx canister call e2e_project_frontend list_permitted '(record { permission = variant { ManagePermissions }; })'
+  assert_match "$(dfx identity get-principal)"
 }
 
 @test "set permissions through upgrade argument" {

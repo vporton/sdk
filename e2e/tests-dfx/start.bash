@@ -12,8 +12,64 @@ teardown() {
   standard_teardown
 }
 
-@test "start and stop outside project" {
+@test "network-id contains settings digest" {
   dfx_start
+
+  NETWORK_ID_PATH="$E2E_SHARED_LOCAL_NETWORK_DATA_DIRECTORY/network-id"
+  SETTINGS_DIGEST=$(jq -r '.settings_digest' "$NETWORK_ID_PATH")
+  NETWORK_ID_BY_SETTINGS_DIGEST_PATH="$E2E_SHARED_LOCAL_NETWORK_DATA_DIRECTORY/$SETTINGS_DIGEST/network-id"
+  assert_command diff "$NETWORK_ID_PATH" "$NETWORK_ID_BY_SETTINGS_DIGEST_PATH"
+}
+
+@test "start and stop" {
+  dfx_start
+  dfx_stop
+
+  dfx_start
+  dfx_stop
+}
+
+@test "start and stop with different options" {
+  [[ "$USE_POCKETIC" ]] && skip "skipped for pocketic: clean required"
+  dfx_start --artificial-delay 101
+  dfx_stop
+
+  # notice: no need to --clean
+  dfx_start --artificial-delay 102
+  dfx_stop
+}
+
+@test "project networks still need --clean" {
+  dfx_new hello
+  define_project_network
+
+  dfx_start --artificial-delay 101
+  dfx stop
+
+  assert_command_fail dfx_start --artificial-delay 102
+}
+
+@test "stop and start with other options does not disrupt projects" {
+  [[ "$USE_POCKETIC" ]] && skip "skipped for pocketic: clean required"
+  dfx_start --artificial-delay 101
+
+  dfx_new p1
+  assert_command dfx deploy
+  CANISTER_ID="$(dfx canister id p1_backend)"
+
+  assert_command dfx stop
+  dfx_start --artificial-delay 102
+  assert_command dfx stop
+
+  dfx_start --artificial-delay 101
+
+  assert_command dfx canister id p1_backend
+  assert_eq "$CANISTER_ID"
+}
+
+@test "start and stop outside project" {
+  assert_command dfx_start
+  assert_contains "Success! The dfx server is running in the background."
 
   mkdir subdir
   cd subdir || exit 1
@@ -48,29 +104,31 @@ teardown() {
   assert_contains "Module hash: None"
 }
 
-
-@test "icx-proxy domain configuration in string form" {
+@test "pocket-ic proxy domain configuration in string form" {
   create_networks_json
   jq '.local.proxy.domain="xyz.domain"' "$E2E_NETWORKS_JSON" | sponge "$E2E_NETWORKS_JSON"
 
   dfx_start
 
-  assert_command ps aux
-  assert_match "icx-proxy.*--domain xyz.domain"
+  domains="$(curl "http://localhost:$(get_pocketic_proxy_config_port)/http_gateway" \
+    | jq -c ".[] | select(.port == $(get_webserver_port)) | .domains | sort")"
+
+  assert_eq '["xyz.domain"]' "$domains"
 }
 
-@test "icx-proxy domain configuration in vector form" {
+@test "pocket-ic proxy domain configuration in vector form" {
   create_networks_json
   jq '.local.proxy.domain=["xyz.domain", "abc.something"]' "$E2E_NETWORKS_JSON" | sponge "$E2E_NETWORKS_JSON"
 
   dfx_start
 
-  assert_command ps aux
-  assert_match "icx-proxy.*--domain xyz.domain"
-  assert_match "icx-proxy.*--domain abc.something"
+  domains="$(curl "http://localhost:$(get_pocketic_proxy_config_port)/http_gateway" \
+    | jq -c ".[] | select(.port == $(get_webserver_port)) | .domains | sort")"
+
+  assert_eq '["abc.something","xyz.domain"]' "$domains"
 }
 
-@test "icx-proxy domain configuration from project defaults" {
+@test "pocket-ic proxy domain configuration from project defaults" {
   dfx_new
   define_project_network
 
@@ -78,21 +136,22 @@ teardown() {
 
   dfx_start
 
-  assert_command ps aux
-  assert_match "icx-proxy.*--domain xyz.domain"
-  assert_match "icx-proxy.*--domain abc.something"
+  domains="$(curl "http://localhost:$(get_pocketic_proxy_config_port)/http_gateway" \
+    | jq -c ".[] | select(.port == $(get_webserver_port)) | .domains | sort")"
+
+  assert_eq '["abc.something","xyz.domain"]' "$domains"
 }
 
-@test "icx-proxy domain configuration from command-line" {
+@test "pocket-ic proxy domain configuration from command-line" {
   dfx_start --domain xyz.domain --domain def.somewhere
 
-  assert_command ps aux
-  assert_match "icx-proxy.*--domain xyz.domain"
-  assert_match "icx-proxy.*--domain def.somewhere"
+  domains="$(curl "http://localhost:$(get_pocketic_proxy_config_port)/http_gateway" \
+    | jq -c ".[] | select(.port == $(get_webserver_port)) | .domains | sort")"
+
+  assert_eq '["def.somewhere","xyz.domain"]' "$domains"
 }
 
 @test "dfx restarts the replica" {
-  [[ "$USE_POCKETIC" ]] && skip "skipped for pocketic: state persistence"
   dfx_new hello
   dfx_start
 
@@ -101,10 +160,11 @@ teardown() {
   assert_command dfx canister call hello_backend greet '("Alpha")'
   assert_eq '("Hello, Alpha!")'
 
-  REPLICA_PID=$(get_replica_pid)
+  REPLICA_PID=$([[ "$USE_POCKETIC" ]] && get_pocketic_pid || get_replica_pid)
 
   echo "replica pid is $REPLICA_PID"
 
+  [[ "$USE_POCKETIC" ]] && curl -X DELETE "http://localhost:$(get_pocketic_port)/instances/0"
   kill -KILL "$REPLICA_PID"
   assert_process_exits "$REPLICA_PID" 15s
 
@@ -114,13 +174,13 @@ teardown() {
   wait_until_replica_healthy
 
   # Sometimes initially get an error like:
-  #     IC0304: Attempt to execute a message on canister <>> which contains no Wasm module
+  #     IC0537: Attempt to execute a message on canister <>> which contains no Wasm module
   # but the condition clears.
   timeout 30s sh -c \
     "until dfx canister call hello_backend greet '(\"wait\")'; do echo waiting for any canister call to succeed; sleep 1; done" \
     || (echo "canister call did not succeed") # but continue, for better error reporting
   # even after the above, still sometimes fails with
-  #     IC0515: Certified state is not available yet. Please try again...
+  #     IC0208: Certified state is not available yet. Please try again...
   sleep 10
   timeout 30s sh -c \
     "until dfx canister call hello_backend greet '(\"wait\")'; do echo waiting for any canister call to succeed; sleep 1; done" \
@@ -130,21 +190,7 @@ teardown() {
   assert_eq '("Hello, Omega!")'
 }
 
-@test "dfx restarts pocketic" {
-  [[ "$USE_POCKETIC" ]] || skip "skipped for replica"
-  dfx_start
-
-  POCKETIC_PID=$(get_pocketic_pid)
-  echo "pocketic pid is $POCKETIC_PID"
-  kill -KILL "$POCKETIC_PID"
-  assert_process_exits "$POCKETIC_PID" 15s
-  timeout 15s sh -c \
-    'until dfx ping; do echo waiting for pocketic to restart; sleep 1; done' \
-    || (echo "pocketic did not restart" && ps aux && exit 1)
-  assert_command wait_until_replica_healthy
-}
-
-@test "dfx restarts icx-proxy" {
+@test "dfx restarts pocketic proxy" {
   dfx_new_assets hello
   dfx_start
 
@@ -153,24 +199,23 @@ teardown() {
   assert_command dfx canister call hello_backend greet '("Alpha")'
   assert_eq '("Hello, Alpha!")'
 
-  ICX_PROXY_PID=$(get_icx_proxy_pid)
+  POCKETIC_PROXY_PID=$(get_pocketic_proxy_pid)
 
-  echo "icx-proxy pid is $ICX_PROXY_PID"
+  echo "pocket-ic proxy pid is $POCKETIC_PROXY_PID"
 
-  kill -KILL "$ICX_PROXY_PID"
-  assert_process_exits "$ICX_PROXY_PID" 15s
+  kill -KILL "$POCKETIC_PROXY_PID"
+  assert_process_exits "$POCKETIC_PROXY_PID" 15s
 
   ID=$(dfx canister id hello_frontend)
 
   timeout 15s sh -c \
-    "until curl --fail http://localhost:\$(cat \"$E2E_SHARED_LOCAL_NETWORK_DATA_DIRECTORY\"/webserver-port)/sample-asset.txt?canisterId=$ID; do echo waiting for icx-proxy to restart; sleep 1; done" \
-    || (echo "icx-proxy did not restart" && ps aux && exit 1)
+    "until curl --fail http://localhost:\$(cat \"$E2E_SHARED_LOCAL_NETWORK_DATA_DIRECTORY\"/webserver-port)/sample-asset.txt?canisterId=$ID; do echo waiting for pocket-ic proxy to restart; sleep 1; done" \
+    || (echo "pocket-ic proxy did not restart" && ps aux && exit 1)
 
   assert_command curl --fail http://localhost:"$(get_webserver_port)"/sample-asset.txt?canisterId="$ID"
 }
 
-@test "dfx restarts icx-proxy when the replica restarts" {
-  [[ "$USE_POCKETIC" ]] && skip "skipped for pocketic: state persistence"
+@test "dfx restarts pocketic proxy when the replica restarts" {
   dfx_new_assets hello
   dfx_start
 
@@ -179,15 +224,16 @@ teardown() {
   assert_command dfx canister call hello_backend greet '("Alpha")'
   assert_eq '("Hello, Alpha!")'
 
-  REPLICA_PID=$(get_replica_pid)
-  ICX_PROXY_PID=$(get_icx_proxy_pid)
+  REPLICA_PID=$([[ "$USE_POCKETIC" ]] && get_pocketic_pid || get_replica_pid)
+  POCKETIC_PROXY_PID=$(get_pocketic_proxy_pid)
 
   echo "replica pid is $REPLICA_PID"
-  echo "icx-proxy pid is $ICX_PROXY_PID"
+  echo "pocket-ic proxy pid is $POCKETIC_PROXY_PID"
 
+  [[ "$USE_POCKETIC" ]] && curl -X DELETE "http://localhost:$(get_pocketic_port)/instances/0"
   kill -KILL "$REPLICA_PID"
   assert_process_exits "$REPLICA_PID" 15s
-  assert_process_exits "$ICX_PROXY_PID" 15s
+  assert_process_exits "$POCKETIC_PROXY_PID" 15s
 
   timeout 15s sh -c \
     'until dfx ping; do echo waiting for replica to restart; sleep 1; done' \
@@ -195,13 +241,13 @@ teardown() {
   wait_until_replica_healthy
 
   # Sometimes initially get an error like:
-  #     IC0304: Attempt to execute a message on canister <>> which contains no Wasm module
+  #     IC0537: Attempt to execute a message on canister <>> which contains no Wasm module
   # but the condition clears.
   timeout 30s sh -c \
     "until dfx canister call hello_backend greet '(\"wait\")'; do echo waiting for any canister call to succeed; sleep 1; done" \
     || (echo "canister call did not succeed") # but continue, for better error reporting
   # even after the above, still sometimes fails with
-  #     IC0515: Certified state is not available yet. Please try again...
+  #     IC0208: Certified state is not available yet. Please try again...
   sleep 10
   timeout 30s sh -c \
     "until dfx canister call hello_backend greet '(\"wait\")'; do echo waiting for any canister call to succeed; sleep 1; done" \
@@ -213,36 +259,8 @@ teardown() {
   ID=$(dfx canister id hello_frontend)
 
   timeout 15s sh -c \
-    "until curl --fail http://localhost:\$(cat \"$E2E_SHARED_LOCAL_NETWORK_DATA_DIRECTORY/webserver-port\")/sample-asset.txt?canisterId=$ID; do echo waiting for icx-proxy to restart; sleep 1; done" \
-    || (echo "icx-proxy did not restart" && ps aux && exit 1)
-
-  assert_command curl --fail http://localhost:"$(get_webserver_port)"/sample-asset.txt?canisterId="$ID"
-}
-
-@test "dfx restarts icx-proxy when pocketic restarts" {
-  [[ "$USE_POCKETIC" ]] || skip "skipped for replica"
-  dfx_start
-  POCKETIC_PID=$(get_pocketic_pid)
-  ICX_PROXY_PID=$(get_icx_proxy_pid)
-  echo "pocketic pid is $POCKETIC_PID"
-  echo "icx-proxy pid is $ICX_PROXY_PID"
-
-  kill -KILL "$POCKETIC_PID"
-  assert_process_exits "$POCKETIC_PID" 15s
-  assert_process_exits "$ICX_PROXY_PID" 15s
-  
-  timeout 15s sh -c \
-    'until dfx ping; do echo waiting for replica to restart; sleep 1; done' \
-    || (echo "replica did not restart" && ps aux && exit 1)
-  assert_command wait_until_replica_healthy
-  POCKETIC_NETWORK="http://localhost:$(get_pocketic_port)/instances/0/"
-  dfx_new_assets hello
-  assert_command dfx deploy --network "$POCKETIC_NETWORK"
-  ID=$(dfx canister id hello_frontend --network "$POCKETIC_NETWORK")
-
-  timeout 15s sh -c \
-    "until curl --fail http://localhost:\$(cat \"$E2E_SHARED_LOCAL_NETWORK_DATA_DIRECTORY/webserver-port\")/sample-asset.txt?canisterId=$ID; do echo waiting for icx-proxy to restart; sleep 1; done" \
-    || (echo "icx-proxy did not restart" && ps aux && exit 1)
+    "until curl --fail http://localhost:\$(cat \"$E2E_SHARED_LOCAL_NETWORK_DATA_DIRECTORY/webserver-port\")/sample-asset.txt?canisterId=$ID; do echo waiting for pocket-ic proxy to restart; sleep 1; done" \
+    || (echo "pocket-ic proxy did not restart" && ps aux && exit 1)
 
   assert_command curl --fail http://localhost:"$(get_webserver_port)"/sample-asset.txt?canisterId="$ID"
 }
@@ -447,18 +465,14 @@ teardown() {
   assert_match "Hello, World! from DFINITY"
 }
 
-@test "modifying networks.json requires --clean on restart" {
+@test "modifying networks.json does not require --clean on restart" {
   [[ "$USE_POCKETIC" ]] && skip "skipped for pocketic: --force"
   dfx_start
   dfx stop
   assert_command dfx_start
   dfx stop
   jq -n '.local.replica.log_level="warning"' > "$E2E_NETWORKS_JSON"
-  assert_command_fail dfx_start
-  assert_contains "The network state can't be reused with this configuration. Rerun with \`--clean\`."
-  assert_command dfx_start --force
-  dfx stop
-  assert_command dfx_start --clean
+  assert_command dfx_start
 }
 
 @test "project-local networks require --clean if dfx.json was updated" {
@@ -480,8 +494,10 @@ teardown() {
   assert_command dfx_start --clean
 }
 
-@test "flags count as configuration modification and require --clean" {
-  [[ "$USE_POCKETIC" ]] && skip "skipped for pocketic: --artificial-delay"
+@test "flags count as configuration modification and require --clean for a project network" {
+  dfx_new
+  define_project_network
+
   dfx start --background
   dfx stop
   assert_command_fail dfx start --artificial-delay 100 --background
@@ -497,4 +513,10 @@ teardown() {
 
 @test "dfx start then ctrl-c won't hang and panic but stop actors quickly" {
   assert_command "${BATS_TEST_DIRNAME}/../assets/expect_scripts/ctrl_c_right_after_dfx_start.exp"
+}
+
+@test "dfx-started processes can be killed with dfx killall" {
+    dfx_start
+    dfx killall
+    assert_command_fail pgrep dfx replica pocket-ic
 }

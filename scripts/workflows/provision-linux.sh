@@ -34,7 +34,8 @@ if [ "$E2E_TEST" = "tests-dfx/identity_encryption.bash" ] \
     || [ "$E2E_TEST" = "tests-dfx/generate.bash" ] \
     || [ "$E2E_TEST" = "tests-dfx/start.bash" ] \
     || [ "$E2E_TEST" = "tests-dfx/new.bash" ] \
-    || [ "$E2E_TEST" = "tests-dfx/call.bash" ]
+    || [ "$E2E_TEST" = "tests-dfx/call.bash" ] \
+    || [ "$E2E_TEST" = "tests-dfx/build.bash" ]
 then
     sudo apt-get install --yes expect
 fi
@@ -50,8 +51,8 @@ if [ "$E2E_TEST" = "tests-dfx/build_rust.bash" ]; then
 fi
 
 if [ "$E2E_TEST" = "tests-dfx/deps.bash" ]; then
-     cargo install cargo-binstall
-     cargo binstall -y ic-wasm
+     cargo install cargo-binstall@1.6.9 --locked
+     cargo binstall -y ic-wasm --locked
 fi
 
 if [ "$E2E_TEST" = "tests-icx-asset/icx-asset.bash" ]; then

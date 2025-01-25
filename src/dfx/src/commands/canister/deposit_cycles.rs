@@ -3,7 +3,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::lib::error::DfxResult;
 use crate::lib::identity::wallet::get_or_create_wallet_canister;
 use crate::lib::operations::canister;
-use crate::lib::operations::cycles_ledger::cycles_ledger_enabled;
+use crate::lib::operations::canister::skip_remote_canister;
 use crate::lib::root_key::fetch_root_key_if_needed;
 use crate::lib::{environment::Environment, operations::cycles_ledger};
 use crate::util::clap::parsers::{cycle_amount_parser, icrc_subaccount_parser};
@@ -57,10 +57,6 @@ async fn deposit_cycles(
 
     match call_sender {
         CallSender::SelectedId => {
-            if !cycles_ledger_enabled() {
-                // should be unreachable
-                bail!("No wallet configured");
-            }
             cycles_ledger::withdraw(
                 env.get_agent(),
                 env.get_logger(),
@@ -111,12 +107,12 @@ pub async fn exec(
                 call_sender = &proxy_sender;
             }
             Err(err) => {
-                if cycles_ledger_enabled() && matches!(err, crate::lib::identity::wallet::GetOrCreateWalletCanisterError::NoWalletConfigured { .. }) {
+                if matches!(err, crate::lib::identity::wallet::GetOrCreateWalletCanisterError::NoWalletConfigured { .. }) {
                     debug!(env.get_logger(), "No wallet configured");
                 } else {
                     bail!(err)
                 }
-            },
+            }
         }
     }
 
@@ -152,6 +148,10 @@ pub async fn exec(
 
         if let Some(canisters) = &config.get_config().canisters {
             for canister in canisters.keys() {
+                if skip_remote_canister(env, canister)? {
+                    continue;
+                }
+
                 deposit_cycles(
                     env,
                     canister,

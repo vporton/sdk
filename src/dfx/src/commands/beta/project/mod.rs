@@ -14,11 +14,11 @@ pub struct ProjectOpts {
 
 #[derive(Parser)]
 enum SubCommand {
-    Import(import::ImportOpts),
+    MotokoImport(import::ImportOpts),
 }
 
 pub fn exec(env: &dyn Environment, cmd: ProjectOpts) -> DfxResult {
     match cmd.subcmd {
-        SubCommand::Import(v) => import::exec(env, v),
+        SubCommand::MotokoImport(v) => import::exec(env, v),
     }
 }

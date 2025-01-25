@@ -199,6 +199,7 @@ teardown() {
   dfx canister create --all
   dfx build
   dfx canister install hello_backend
+  [[ "$USE_POCKETIC" ]] && dfx ledger fabricate-cycles --t 9999999 --canister hello_backend
   assert_command dfx canister call hello_backend recurse 100
 }
 
@@ -207,7 +208,18 @@ teardown() {
   dfx deploy
   assert_command_fail dfx canister call hello_backend greet '' --with-cycles 100
   assert_command dfx canister call hello_backend greet '' --with-cycles 100 --wallet "$(dfx identity get-wallet)"
+  dfx identity whoami
 }
+
+@test "call with cycles with wallet by name or by principal" {
+  dfx_start
+  dfx deploy
+  assert_command_fail dfx canister call hello_backend greet '' --with-cycles 100
+
+  assert_command dfx canister call hello_backend greet '' --with-cycles 100 --wallet "$(dfx identity get-wallet)"
+  assert_command dfx canister call hello_backend greet '' --with-cycles 100 --wallet default
+}
+
 
 @test "call by canister id outside of a project" {
   install_asset greet
@@ -235,55 +247,6 @@ teardown() {
   assert_match '("Hello, you!")'
   assert_command dfx canister call "$CANISTER_ID" greet '("you")'
   assert_match '("Hello, you!")'
-}
-
-@test "call management canister - bitcoin query API on the IC mainnet" {
-  WARNING="call to the management canister cannot be benefit from the \"Replica Signed Queries\" feature.
-The response might not be trustworthy.
-If you want to get reliable result, you can make an update call to the secure alternative:"
-  # bitcoin_get_balance_query
-  ## bitcoin mainnet
-  assert_command dfx canister call --network ic --query aaaaa-aa bitcoin_get_balance_query '(
-  record {
-    network = variant { mainnet };
-    address = "bcrt1qu58aj62urda83c00eylc6w34yl2s6e5rkzqet7";
-  }
-)'
-  # shellcheck disable=SC2154
-  assert_contains "bitcoin_get_balance_query $WARNING bitcoin_get_balance" "$stderr"
-
-  # TODO: re-enable when testnet back to normal, tracking at https://dfinity.atlassian.net/browse/SDKTG-323
-
-#   ## bitcoin testnet
-#   assert_command dfx canister call --network ic --query aaaaa-aa bitcoin_get_balance_query '(
-#   record {
-#     network = variant { testnet };
-#     address = "bcrt1qu58aj62urda83c00eylc6w34yl2s6e5rkzqet7";
-#   }
-# )'
-#   # shellcheck disable=SC2154
-#   assert_contains "bitcoin_get_balance_query $WARNING bitcoin_get_balance" "$stderr"
-
-  # bitcoin_get_utxos_query
-  ## bitcoin mainnet
-  assert_command dfx canister call --network ic --query aaaaa-aa bitcoin_get_utxos_query '(
-  record {
-    network = variant { mainnet };
-    address = "bcrt1qu58aj62urda83c00eylc6w34yl2s6e5rkzqet7";
-  }
-)'
-  # shellcheck disable=SC2154
-  assert_contains "bitcoin_get_utxos_query $WARNING bitcoin_get_utxos" "$stderr"
-
-#   ## bitcoin testnet
-#   assert_command dfx canister call --network ic --query aaaaa-aa bitcoin_get_utxos_query '(
-#   record {
-#     network = variant { testnet };
-#     address = "bcrt1qu58aj62urda83c00eylc6w34yl2s6e5rkzqet7";
-#   }
-# )'
-#   # shellcheck disable=SC2154
-#   assert_contains "bitcoin_get_utxos_query $WARNING bitcoin_get_utxos" "$stderr"
 }
 
 @test "inter-canister calls" {

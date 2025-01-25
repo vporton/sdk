@@ -33,6 +33,8 @@ use crate::error::UploadContentError::{CreateBatchFailed, ListAssetsFailed};
 use candid::Nat;
 use ic_agent::AgentError;
 use ic_utils::Canister;
+use itertools::Itertools;
+use serde_bytes::ByteBuf;
 use slog::{debug, info, trace, warn, Logger};
 use std::collections::HashMap;
 use std::path::Path;
@@ -43,6 +45,7 @@ const KNOWN_DIRECTORIES: [&str; 1] = [".well-known"];
 /// Sets the contents of the asset canister to the contents of a directory, including deleting old assets.
 pub async fn upload_content_and_assemble_sync_operations(
     canister: &Canister<'_>,
+    canister_api_version: u16,
     dirs: &[&Path],
     no_delete: bool,
     logger: &Logger,
@@ -72,7 +75,8 @@ pub async fn upload_content_and_assemble_sync_operations(
         "Staging contents of new and changed assets in batch {}:", batch_id
     );
 
-    let chunk_uploader = ChunkUploader::new(canister.clone(), batch_id.clone());
+    let chunk_uploader =
+        ChunkUploader::new(canister.clone(), canister_api_version, batch_id.clone());
 
     let project_assets = make_project_assets(
         Some(&chunk_uploader),
@@ -80,9 +84,11 @@ pub async fn upload_content_and_assemble_sync_operations(
         &canister_assets,
         logger,
     )
-    .await?;
+    .await
+    .map_err(UploadContentError::CreateProjectAssetError)?;
 
     let commit_batch_args = batch_upload::operations::assemble_commit_batch_arguments(
+        &chunk_uploader,
         project_assets,
         canister_assets,
         match no_delete {
@@ -91,7 +97,9 @@ pub async fn upload_content_and_assemble_sync_operations(
         },
         canister_asset_properties,
         batch_id,
-    );
+    )
+    .await
+    .map_err(UploadContentError::AssembleCommitBatchArgumentFailed)?;
 
     // -v
     debug!(
@@ -119,9 +127,15 @@ pub async fn sync(
     no_delete: bool,
     logger: &Logger,
 ) -> Result<(), SyncError> {
-    let commit_batch_args =
-        upload_content_and_assemble_sync_operations(canister, dirs, no_delete, logger).await?;
     let canister_api_version = api_version(canister).await;
+    let commit_batch_args = upload_content_and_assemble_sync_operations(
+        canister,
+        canister_api_version,
+        dirs,
+        no_delete,
+        logger,
+    )
+    .await?;
     debug!(logger, "Canister API version: {canister_api_version}. ic-asset API version: {BATCH_UPLOAD_API_VERSION}");
     info!(logger, "Committing batch.");
     match canister_api_version {
@@ -193,8 +207,16 @@ pub async fn prepare_sync_for_proposal(
     canister: &Canister<'_>,
     dirs: &[&Path],
     logger: &Logger,
-) -> Result<(), PrepareSyncForProposalError> {
-    let arg = upload_content_and_assemble_sync_operations(canister, dirs, false, logger).await?;
+) -> Result<(Nat, ByteBuf), PrepareSyncForProposalError> {
+    let canister_api_version = api_version(canister).await;
+    let arg = upload_content_and_assemble_sync_operations(
+        canister,
+        canister_api_version,
+        dirs,
+        false,
+        logger,
+    )
+    .await?;
     let arg = sort_batch_operations(arg);
     let batch_id = arg.batch_id.clone();
 
@@ -217,9 +239,9 @@ pub async fn prepare_sync_for_proposal(
         }
     };
 
-    info!(logger, "Proposed commit of batch {} with evidence {}.  Either commit it by proposal, or delete it.", batch_id, hex::encode(evidence));
+    info!(logger, "Proposed commit of batch {} with evidence {}.  Either commit it by proposal, or delete it.", batch_id, hex::encode(&evidence));
 
-    Ok(())
+    Ok((batch_id, evidence))
 }
 
 fn sort_batch_operations(mut args: CommitBatchArguments) -> CommitBatchArguments {
@@ -305,6 +327,71 @@ pub(crate) fn gather_asset_descriptors(
             for rule in rules {
                 warn!(logger, "{}", serde_json::to_string_pretty(&rule).unwrap());
             }
+        }
+
+        let no_policy_assets = asset_descriptors
+            .values()
+            .filter(|asset| asset.config.warn_about_no_security_policy())
+            .collect_vec();
+        if !no_policy_assets.is_empty() {
+            warn!(
+                logger,
+                "This project does not define a security policy for some assets."
+            );
+            warn!(
+                logger,
+                "You should define a security policy in .ic-assets.json5. For example:"
+            );
+            warn!(logger, "[");
+            warn!(logger, "  {{");
+            warn!(logger, r#"    "match": "**/*","#);
+            warn!(logger, r#"    "security_policy": "standard""#);
+            warn!(logger, "  }}");
+            warn!(logger, "]");
+
+            if no_policy_assets.len() == asset_descriptors.len() {
+                warn!(logger, "Assets without any security policy: all");
+            } else {
+                warn!(logger, "Assets without any security policy:");
+                for asset in &no_policy_assets {
+                    warn!(logger, "  - {}", asset.key);
+                }
+            }
+        }
+        let standard_policy_assets = asset_descriptors
+            .values()
+            .filter(|asset| asset.config.warn_about_standard_security_policy())
+            .collect_vec();
+        if !standard_policy_assets.is_empty() {
+            warn!(logger, "This project uses the default security policy for some assets. While it is set up to work with many applications, it is recommended to further harden the policy to increase security against attacks like XSS.");
+            warn!(logger, "To get started, have a look at 'dfx info canister-security-policy'. It shows the default security policy along with suggestions on how to improve it.");
+            if standard_policy_assets.len() == asset_descriptors.len() {
+                warn!(logger, "Unhardened assets: all");
+            } else {
+                warn!(logger, "Unhardened assets:");
+                for asset in &standard_policy_assets {
+                    warn!(logger, "  - {}", asset.key);
+                }
+            }
+        }
+        if !standard_policy_assets.is_empty() || !no_policy_assets.is_empty() {
+            warn!(logger, "To disable the policy warning, define \"disable_security_policy_warning\": true in .ic-assets.json5.");
+        }
+        let missing_hardening_assets = asset_descriptors
+            .values()
+            .filter(|asset| asset.config.warn_about_missing_hardening_headers())
+            .collect_vec();
+        if !missing_hardening_assets.is_empty() {
+            let mut error = String::new();
+            if missing_hardening_assets.len() == asset_descriptors.len() {
+                error.push_str("Unhardened assets: all");
+            } else {
+                error.push_str("Unhardened assets:");
+                for asset in &missing_hardening_assets {
+                    error.push_str(&format!("\n  - {}", asset.key));
+                }
+            }
+            return Err(GatherAssetDescriptorsError::HardenedSecurityPolicyIsNotHardened(error));
         }
     }
     Ok(asset_descriptors.into_values().collect())

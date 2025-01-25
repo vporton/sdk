@@ -20,16 +20,16 @@ if [ "$E2E_TEST" = "tests-dfx/bitcoin.bash" ]; then
      brew fetch --retry bitcoin
      brew install bitcoin
 fi
-if [ "$E2E_TEST" = "tests-dfx/build_rust.bash" ]; then
+if [ "$E2E_TEST" = "tests-dfx/build_rust.bash" ] && command -v cargo-audit &>/dev/null; then
     cargo uninstall cargo-audit
 fi
 if [ "$E2E_TEST" = "tests-dfx/certificate.bash" ]; then
-     brew fetch --retry mitmproxy
-     brew install mitmproxy
+     brew fetch --retry --cask mitmproxy
+     brew install --cask mitmproxy --no-quarantine
 fi
 if [ "$E2E_TEST" = "tests-dfx/deps.bash" ]; then
-     cargo install cargo-binstall
-     cargo binstall -y ic-wasm
+     cargo install cargo-binstall@1.6.9 --locked
+     cargo binstall -y ic-wasm --locked
 fi
 
 if [ "$E2E_TEST" = "tests-icx-asset/icx-asset.bash" ]; then

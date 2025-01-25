@@ -1,5 +1,8 @@
+use crate::lib::cycles_ledger_types::create_canister::CreateCanisterError;
 use crate::lib::error_code;
 use anyhow::Error as AnyhowError;
+use dfx_core::error::root_key::FetchRootKeyError;
+use dfx_core::network::provider::get_network_context;
 use ic_agent::agent::{RejectCode, RejectResponse};
 use ic_agent::AgentError;
 use ic_asset::error::{GatherAssetDescriptorsError, SyncError, UploadContentError};
@@ -45,9 +48,24 @@ pub fn diagnose(err: &AnyhowError) -> Diagnosis {
     }
 
     if let Some(agent_err) = err.downcast_ref::<AgentError>() {
+        if wallet_method_not_found(agent_err) {
+            return diagnose_bad_wallet();
+        }
         if not_a_controller(agent_err) {
             return diagnose_http_403();
+        } else if *agent_err == AgentError::CertificateNotAuthorized() {
+            return subnet_not_authorized();
         }
+        if cycles_ledger_not_found(err) {
+            return diagnose_cycles_ledger_not_found();
+        }
+        if ledger_not_found(err) {
+            return diagnose_ledger_not_found();
+        }
+    }
+
+    if local_replica_not_running(err) {
+        return diagnose_local_replica_not_running();
     }
 
     if let Some(sync_error) = err.downcast_ref::<SyncError>() {
@@ -56,7 +74,39 @@ pub fn diagnose(err: &AnyhowError) -> Diagnosis {
         }
     }
 
+    if let Some(create_canister_err) = err.downcast_ref::<CreateCanisterError>() {
+        if insufficient_cycles(create_canister_err) {
+            return diagnose_insufficient_cycles();
+        }
+    }
+
     NULL_DIAGNOSIS
+}
+
+fn local_replica_not_running(err: &AnyhowError) -> bool {
+    let maybe_agent_error = {
+        if let Some(FetchRootKeyError::AgentError(agent_error)) =
+            err.downcast_ref::<FetchRootKeyError>()
+        {
+            Some(agent_error)
+        } else {
+            err.downcast_ref::<AgentError>()
+        }
+    };
+    if let Some(AgentError::TransportError(transport_error)) = maybe_agent_error {
+        transport_error.is_connect()
+            && transport_error
+                .url()
+                .and_then(|url| url.host())
+                .map(|host| match host {
+                    url::Host::Domain(domain) => domain == "localhost",
+                    url::Host::Ipv4(ipv4_addr) => ipv4_addr.is_loopback(),
+                    url::Host::Ipv6(ipv6_addr) => ipv6_addr.is_loopback(),
+                })
+                .unwrap_or(false)
+    } else {
+        false
+    }
 }
 
 fn not_a_controller(err: &AgentError) -> bool {
@@ -80,6 +130,22 @@ fn not_a_controller(err: &AgentError) -> bool {
             matches!(std::str::from_utf8(payload.content.as_slice()), Ok("Wrong sender")))
 }
 
+fn wallet_method_not_found(err: &AgentError) -> bool {
+    match err {
+        AgentError::CertifiedReject(RejectResponse {
+            reject_code: RejectCode::CanisterError,
+            reject_message,
+            ..
+        }) if reject_message.contains("Canister has no update method 'wallet_") => true,
+        AgentError::UncertifiedReject(RejectResponse {
+            reject_code: RejectCode::CanisterError,
+            reject_message,
+            ..
+        }) if reject_message.contains("Canister has no query method 'wallet_") => true,
+        _ => false,
+    }
+}
+
 fn diagnose_http_403() -> Diagnosis {
     let error_explanation = "Each canister has a set of controllers. Only those controllers have access to the canister's management functions (like install_code or stop_canister).\n\
         The principal you are using to call a management function is not part of the controllers.";
@@ -96,6 +162,22 @@ The most common way this error is solved is by running 'dfx canister update-sett
         Some(error_explanation.to_string()),
         Some(action_suggestion.to_string()),
     )
+}
+
+fn diagnose_local_replica_not_running() -> Diagnosis {
+    let error_explanation =
+        "You are trying to connect to the local replica but dfx cannot connect to it.";
+    let action_suggestion =
+        "Target a different network or run 'dfx start' to start the local replica.";
+    (
+        Some(error_explanation.to_string()),
+        Some(action_suggestion.to_string()),
+    )
+}
+
+fn subnet_not_authorized() -> Diagnosis {
+    let action_suggestion = "If you are connecting to a node directly instead of a boundary node, try using --provisional-create-canister-effective-canister-id with a canister id in the subnet's canister range. First non-root subnet: 5v3p4-iyaaa-aaaaa-qaaaa-cai, second non-root subnet: jrlun-jiaaa-aaaab-aaaaa-cai";
+    (None, Some(action_suggestion.to_string()))
 }
 
 fn duplicate_asset_key_dist_and_src(sync_error: &SyncError) -> bool {
@@ -142,4 +224,74 @@ One or both of the following are a likely explanation:
 See also release notes: https://forum.dfinity.org/t/dfx-0-11-0-is-promoted-with-breaking-changes/14327"#;
 
     (Some(explanation.to_string()), Some(suggestion.to_string()))
+}
+
+fn diagnose_bad_wallet() -> Diagnosis {
+    let explanation = "\
+A wallet has been previously configured (e.g. via `dfx identity set-wallet`).
+However, it did not contain a function that dfx was looking for.
+This may be because:
+    - a wallet was correctly installed, but is outdated
+    - `dfx identity set-wallet` was used on a non-wallet canister";
+    let suggestion = "\
+If you have had the wallet for a while, then you may need to update it with
+`dfx wallet upgrade`. The release notes indicate when there is a new wallet.
+If you recently ran `dfx identity set-wallet`, and the canister may have been
+wrong, you can set a new wallet with
+`dfx identity set-wallet <PRINCIPAL> --identity <IDENTITY>`.
+If you're using a local replica and configuring a wallet was a mistake, you can
+recreate the replica with `dfx stop && dfx start --clean` to start over.";
+    (Some(explanation.to_string()), Some(suggestion.to_string()))
+}
+
+fn cycles_ledger_not_found(err: &AnyhowError) -> bool {
+    err.to_string()
+        .contains("Canister um5iw-rqaaa-aaaaq-qaaba-cai not found")
+}
+
+fn diagnose_cycles_ledger_not_found() -> Diagnosis {
+    let explanation =
+        "Cycles ledger with canister ID 'um5iw-rqaaa-aaaaq-qaaba-cai' is not installed.";
+    let suggestion =
+        "Run the command with '--ic' flag if you want to manage the cycles on the mainnet.";
+
+    (Some(explanation.to_string()), Some(suggestion.to_string()))
+}
+
+fn ledger_not_found(err: &AnyhowError) -> bool {
+    err.to_string()
+        .contains("Canister ryjl3-tyaaa-aaaaa-aaaba-cai not found")
+}
+
+fn diagnose_ledger_not_found() -> Diagnosis {
+    let explanation = "ICP Ledger with canister ID 'ryjl3-tyaaa-aaaaa-aaaba-cai' is not installed.";
+    let suggestion =
+        "Run the command with '--ic' flag if you want to manage the ICP on the mainnet.";
+
+    (Some(explanation.to_string()), Some(suggestion.to_string()))
+}
+
+fn insufficient_cycles(err: &CreateCanisterError) -> bool {
+    matches!(err, CreateCanisterError::InsufficientFunds { balance: _ })
+}
+
+fn diagnose_insufficient_cycles() -> Diagnosis {
+    let network = match get_network_context() {
+        Ok(value) => {
+            if value == "local" {
+                "".to_string()
+            } else {
+                format!(" --network {}", value)
+            }
+        }
+        Err(_) => "".to_string(),
+    };
+
+    let explanation = "Insufficient cycles balance to create the canister.";
+    let suggestion = format!(
+        "Please top up your cycles balance by converting ICP to cycles like below:
+'dfx cycles convert --amount=0.123{}'",
+        network
+    );
+    (Some(explanation.to_string()), Some(suggestion))
 }

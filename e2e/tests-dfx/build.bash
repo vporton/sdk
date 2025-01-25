@@ -279,6 +279,21 @@ teardown() {
   assert_match CUSTOM_CANISTER2_BUILD_DONE
 }
 
+@test "custom canister build script runs in project root" {
+  install_asset custom_canister
+  install_asset wasm/identity
+
+  dfx_start
+  dfx canister create custom2
+
+  cd src/e2e_project_backend
+  pwd
+
+  assert_command dfx build custom2
+  assert_match CUSTOM_CANISTER2_BUILD_DONE
+  assert_match "working directory of build script: '.*/working-dir/e2e_project'"
+}
+
 @test "build succeeds with network parameter" {
   dfx_start
   dfx canister create --all --network local
@@ -327,4 +342,16 @@ teardown() {
   assert_command dfx build --network actuallylocal
   assert_command ls .dfx/actuallylocal/canisters/e2e_project_backend/
   assert_command ls .dfx/actuallylocal/canisters/e2e_project_backend/e2e_project_backend.wasm
+}
+
+@test "dfx build does not require a password" {
+  assert_command "${BATS_TEST_DIRNAME}/../assets/expect_scripts/init_alice_with_pw.exp"
+  assert_command dfx identity use alice
+
+  assert_command timeout 30s dfx build --check
+}
+
+@test "dfx build can post-process memory64 Wasm module" {
+  install_asset memory64
+  assert_command dfx build --check
 }

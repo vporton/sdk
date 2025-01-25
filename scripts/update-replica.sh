@@ -21,18 +21,22 @@ niv update ic-nns-init-x86_64-linux -a rev="$SHA"
 niv update ic-starter-x86_64-darwin -a rev="$SHA"
 niv update ic-starter-x86_64-linux -a rev="$SHA"
 
-# icx-proxy is pinned at f2cd225b621674b19f3d601ebb42555d0c6f614d
-# niv update icx-proxy-x86_64-darwin -a rev="$SHA"
-# niv update icx-proxy-x86_64-linux -a rev="$SHA"
-
 niv update replica-x86_64-darwin -a rev="$SHA"
 niv update replica-x86_64-linux -a rev="$SHA"
+niv update pocket-ic-x86_64-darwin -a rev="$SHA"
+niv update pocket-ic-x86_64-linux -a rev="$SHA"
 niv update canister_sandbox-x86_64-darwin -a rev="$SHA"
 niv update canister_sandbox-x86_64-linux -a rev="$SHA"
+niv update compiler_sandbox-x86_64-darwin -a rev="$SHA"
+niv update compiler_sandbox-x86_64-linux -a rev="$SHA"
 niv update sandbox_launcher-x86_64-darwin -a rev="$SHA"
 niv update sandbox_launcher-x86_64-linux -a rev="$SHA"
 niv update sns-x86_64-darwin -a rev="$SHA"
 niv update sns-x86_64-linux -a rev="$SHA"
+
+# pocket-ic client needs to be upgraded to the same SHA as the pocket-ic server
+perl -i.bak -pe "s/(pocket-ic = {[^}]*rev = \")[a-f0-9]+(\")/\1$SHA\2/" src/dfx/Cargo.toml
+cargo update -p pocket-ic # refresh the lock file
 
 echo "Writing asset sources"
 ./scripts/write-dfx-asset-sources.sh

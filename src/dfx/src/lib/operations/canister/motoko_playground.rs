@@ -6,7 +6,7 @@ use dfx_core::config::model::network_descriptor::{
     NetworkTypeDescriptor, MAINNET_MOTOKO_PLAYGROUND_CANISTER_ID,
 };
 use fn_error_context::context;
-use ic_utils::interfaces::management_canister::builders::InstallMode;
+use ic_utils::interfaces::management_canister::builders::{CanisterUpgradeOptions, InstallMode};
 use num_traits::ToPrimitive;
 use rand::Rng;
 use slog::{debug, info};
@@ -65,12 +65,17 @@ impl TryFrom<InstallMode> for PlaygroundInstallMode {
         match m {
             InstallMode::Install => Ok(Self::Install),
             InstallMode::Reinstall => Ok(Self::Reinstall),
-            InstallMode::Upgrade {
-                skip_pre_upgrade: Some(false) | None,
-            } => Ok(Self::Upgrade),
-            InstallMode::Upgrade {
+            InstallMode::Upgrade(
+                Some(CanisterUpgradeOptions {
+                    skip_pre_upgrade: None | Some(false),
+                    ..
+                })
+                | None,
+            ) => Ok(Self::Upgrade),
+            InstallMode::Upgrade(Some(CanisterUpgradeOptions {
                 skip_pre_upgrade: Some(true),
-            } => bail!("Cannot skip pre-upgrade on the playground"),
+                ..
+            })) => bail!("Cannot skip pre-upgrade on the playground"),
         }
     }
 }
@@ -122,7 +127,6 @@ pub async fn reserve_canister_with_playground(
     let result = agent
         .update(&playground_canister, "getCanisterId")
         .with_arg(get_can_arg)
-        .call_and_wait()
         .await
         .context("Failed to reserve canister at the playground.")?;
     let reserved_canister = Decode!(&result, CanisterInfo)?;
@@ -167,7 +171,6 @@ pub async fn authorize_asset_uploader(
     let _ = agent
         .update(&playground_canister, "callForward")
         .with_arg(call_arg)
-        .call_and_wait()
         .await
         .context("Failed to call playground.")?;
     Ok(())
@@ -206,7 +209,6 @@ pub async fn playground_install_code(
     let result = agent
         .update(&playground_canister, "installCode")
         .with_arg(encoded_arg.as_slice())
-        .call_and_wait()
         .await
         .context("install failed")?;
     let out = Decode!(&result, CanisterInfo)?;

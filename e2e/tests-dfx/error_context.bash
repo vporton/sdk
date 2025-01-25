@@ -23,11 +23,11 @@ teardown() {
   echo "invalid json" >"$E2E_SHARED_LOCAL_NETWORK_DATA_DIRECTORY/wallets.json"
 
   assert_command_fail dfx identity get-wallet
-  assert_match "Failed to parse contents of .*/network/local/wallets.json as json"
+  assert_match "failed to parse contents of .*/network/local/wallets.json as json"
   assert_match "expected value at line 1 column 1"
 
   assert_command_fail dfx wallet upgrade
-  assert_match "Failed to parse contents of .*/network/local/wallets.json as json"
+  assert_match "failed to parse contents of .*/network/local/wallets.json as json"
   assert_match "expected value at line 1 column 1"
 
   echo '{ "identities": {} }' >"$E2E_SHARED_LOCAL_NETWORK_DATA_DIRECTORY/wallets.json"
@@ -35,18 +35,18 @@ teardown() {
   # maybe you were sudo when you made it
   chmod u=w,go= "$E2E_SHARED_LOCAL_NETWORK_DATA_DIRECTORY/wallets.json"
   assert_command_fail dfx identity get-wallet
-  assert_match "Failed to read .*/network/local/wallets.json"
+  assert_match "failed to read .*/network/local/wallets.json"
   assert_match "Permission denied"
 
   assert_command_fail dfx wallet upgrade
-  assert_match "Failed to read .*/network/local/wallets.json"
+  assert_match "failed to read .*/network/local/wallets.json"
   assert_match "Permission denied"
 
   # can't write it?
   chmod u=r,go= "$E2E_SHARED_LOCAL_NETWORK_DATA_DIRECTORY/wallets.json"
   assert_command dfx identity new --storage-mode plaintext alice
   assert_command_fail dfx identity get-wallet --identity alice
-  assert_match "Failed to write to .*/local/wallets.json"
+  assert_match "failed to write to .*/local/wallets.json"
   assert_match "Permission denied"
 }
 
@@ -199,4 +199,25 @@ teardown() {
   assert_command_fail dfx canister status hello_backend
   assert_match "not part of the controllers" # this is part of the error explanation
   assert_match "'dfx canister update-settings --add-controller <controller principal to add> <canister id/name or --all> \(--network ic\)'" # this is part of the solution
+}
+
+@test "bad wallet canisters get diagnosed" {
+  dfx_new hello
+  dfx_start
+  dfx deploy hello_backend --no-wallet
+  id=$(dfx canister id hello_backend)
+  dfx identity set-wallet "$id" --force
+  assert_command_fail dfx wallet balance
+  assert_contains "it did not contain a function that dfx was looking for"
+  assert_contains "dfx identity set-wallet <PRINCIPAL> --identity <IDENTITY>"
+}
+
+@test "Local replica not running has nice error messages" {
+  dfx_new
+  assert_command_fail dfx ping local
+  assert_contains "You are trying to connect to the local replica but dfx cannot connect to it."
+  assert_command_fail dfx deploy
+  assert_contains "You are trying to connect to the local replica but dfx cannot connect to it."
+  assert_command_fail dfx canister call um5iw-rqaaa-aaaaq-qaaba-cai some_method
+  assert_contains "You are trying to connect to the local replica but dfx cannot connect to it."
 }

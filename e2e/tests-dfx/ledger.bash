@@ -2,6 +2,13 @@
 
 load ../utils/_
 
+install_nns() {
+  dfx_start_for_nns_install
+
+  dfx extension install nns --version 0.4.3
+  dfx nns install --ledger-accounts 345f723e9e619934daac6ae0f4be13a7b0ba57d6a608e511a00fd0ded5866752 22ca7edac648b814e81d7946e8bacea99280e07c5f51a04ba7a38009d8ad8e89 5a94fe181e9d411c58726cb87cbf2d016241b6c350bc3330e4869ca76e54ecbc
+}
+
 setup() {
   standard_setup
   install_asset ledger
@@ -9,11 +16,6 @@ setup() {
 
   dfx identity import --storage-mode plaintext alice alice.pem
   dfx identity import --storage-mode plaintext bob bob.pem
-
-  dfx_start_for_nns_install
-
-  dfx extension install nns --version 0.2.1 || true
-  dfx nns install --ledger-accounts 345f723e9e619934daac6ae0f4be13a7b0ba57d6a608e511a00fd0ded5866752 22ca7edac648b814e81d7946e8bacea99280e07c5f51a04ba7a38009d8ad8e89 5a94fe181e9d411c58726cb87cbf2d016241b6c350bc3330e4869ca76e54ecbc
 }
 
 teardown() {
@@ -27,6 +29,8 @@ current_time_nanoseconds() {
 }
 
 @test "ledger account-id" {
+  install_nns
+
   dfx identity use alice
   assert_command dfx ledger account-id
   assert_match 345f723e9e619934daac6ae0f4be13a7b0ba57d6a608e511a00fd0ded5866752
@@ -46,6 +50,8 @@ current_time_nanoseconds() {
 }
 
 @test "ledger balance & transfer" {
+  install_nns
+
   dfx identity use alice
   assert_command dfx ledger account-id
   assert_eq 345f723e9e619934daac6ae0f4be13a7b0ba57d6a608e511a00fd0ded5866752
@@ -104,6 +110,8 @@ current_time_nanoseconds() {
 }
 
 @test "ledger subaccounts" {
+  install_nns
+
   subacct=000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
   assert_command dfx ledger account-id --identity bob --subaccount "$subacct"
   assert_match 5a94fe181e9d411c58726cb87cbf2d016241b6c350bc3330e4869ca76e54ecbc
@@ -140,6 +148,8 @@ tc_to_num() {
 }
 
 @test "ledger top-up" {
+  install_nns
+
   dfx identity use alice
   assert_command dfx ledger balance
   assert_match "1000000000.00000000 ICP"
@@ -198,6 +208,8 @@ tc_to_num() {
 }
 
 @test "ledger create-canister" {
+  install_nns
+
   dfx identity use alice
   assert_command dfx ledger create-canister --amount=100 --subnet-type "type1" "$(dfx identity get-principal)"
   assert_match "Transfer sent at block height"
@@ -216,6 +228,15 @@ tc_to_num() {
   assert_command_fail dfx ledger create-canister --amount=100 --next-to "$CANISTER_ID" "$(dfx identity get-principal)"
   # TODO: assert error message once registry is fixed
   assert_eq "$balance" "$(dfx ledger balance)"
+
+  # Verify that creating a canister under a different principal's control properly sets ownership
+  CONTROLLER_PRINCIPAL="$(dfx --identity default identity get-principal)"
+  assert_command dfx ledger create-canister --amount=100 "$CONTROLLER_PRINCIPAL"
+  echo "created with: $stdout"
+  created_canister_id=$(echo "$stdout" | sed '3q;d' | sed 's/Canister created with id: //;s/"//g')
+  assert_command dfx canister info "$created_canister_id"
+  assert_contains "Controllers: $CONTROLLER_PRINCIPAL"
+  assert_not_contains "$(dfx identity get-principal)"
 
   # Transaction Deduplication
   t=$(current_time_nanoseconds)
@@ -260,6 +281,7 @@ tc_to_num() {
 }
 
 @test "ledger show-subnet-types" {
+  install_nns
   install_asset cmc
 
   dfx deploy cmc
@@ -268,4 +290,11 @@ tc_to_num() {
 
   assert_command dfx ledger show-subnet-types --cycles-minting-canister-id "$CANISTER_ID"
   assert_eq '["type1", "type2"]'
+}
+
+@test "balance without ledger fails as expected" {
+  dfx_start
+
+  assert_command_fail dfx ledger balance
+  assert_contains "ICP Ledger with canister ID 'ryjl3-tyaaa-aaaaa-aaaba-cai' is not installed."
 }

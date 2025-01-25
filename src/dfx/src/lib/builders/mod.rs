@@ -2,8 +2,8 @@ use crate::config::dfx_version_str;
 use crate::lib::canister_info::CanisterInfo;
 use crate::lib::environment::Environment;
 use crate::lib::error::{BuildError, DfxError, DfxResult};
-use crate::lib::models::canister::CanisterPool;
-use crate::lib::models::canister::Import;
+use crate::lib::models::canister::{CanisterPool, MotokoImport};
+use crate::util::command::direct_or_shell_command;
 use anyhow::{anyhow, bail, Context};
 use candid::Principal as CanisterId;
 use candid_parser::utils::CandidSource;
@@ -14,8 +14,7 @@ use dfx_core::util;
 use fn_error_context::context;
 use handlebars::Handlebars;
 use petgraph::visit::Bfs;
-use slog::trace;
-use slog::Logger;
+use slog::{trace, Logger};
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
@@ -23,7 +22,7 @@ use std::fmt::Write;
 use std::fs::{self, metadata};
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::Arc;
 
 mod assets;
@@ -102,6 +101,7 @@ pub trait CanisterBuilder {
     /// Generate type declarations for the canister
     fn generate(
         &self,
+        logger: &Logger,
         pool: &CanisterPool,
         info: &CanisterInfo,
         config: &BuildConfig,
@@ -145,8 +145,9 @@ pub trait CanisterBuilder {
             return Ok(());
         }
 
-        eprintln!(
-            "Generating type declarations for canister {}:",
+        trace!(
+            logger,
+            "Generating type declarations for canister {}",
             &info.get_name()
         );
 
@@ -180,7 +181,7 @@ pub trait CanisterBuilder {
                     output_did_ts_path.to_string_lossy()
                 )
             })?;
-            eprintln!("  {}", &output_did_ts_path.display());
+            trace!(logger, "  {}", &output_did_ts_path.display());
 
             compile_handlebars_files("ts", info, generate_output_dir)?;
         }
@@ -199,7 +200,7 @@ pub trait CanisterBuilder {
                     output_did_js_path.to_string_lossy()
                 )
             })?;
-            eprintln!("  {}", &output_did_js_path.display());
+            trace!(logger, "  {}", &output_did_js_path.display());
 
             compile_handlebars_files("js", info, generate_output_dir)?;
         }
@@ -214,7 +215,7 @@ pub trait CanisterBuilder {
             std::fs::write(&output_mo_path, content).with_context(|| {
                 format!("Failed to write to {}.", output_mo_path.to_string_lossy())
             })?;
-            eprintln!("  {}", &output_mo_path.display());
+            trace!(logger, "  {}", &output_mo_path.display());
         }
 
         // Candid
@@ -224,7 +225,7 @@ pub trait CanisterBuilder {
                 .with_extension("did");
             dfx_core::fs::copy(&did_from_build, &output_did_path)?;
             dfx_core::fs::set_permissions_readwrite(&output_did_path)?;
-            eprintln!("  {}", &output_did_path.display());
+            trace!(logger, "  {}", &output_did_path.display());
         }
 
         Ok(())
@@ -244,7 +245,7 @@ pub trait CanisterBuilder {
             env: &dyn Environment,
             cache: &dyn Cache,
             pool: &CanisterPool,
-            parent: &Import,
+            parent: &MotokoImport,
         ) -> DfxResult {
             if env.get_imports().borrow().nodes().contains_key(parent) {
                 // The item and its descendants are already in the graph.
@@ -253,7 +254,7 @@ pub trait CanisterBuilder {
             let parent_node_index = env.get_imports().borrow_mut().update_node(parent);
 
             let file = match parent {
-                Import::Canister(parent_name) => {
+                MotokoImport::Canister(parent_name) => {
                     let parent_canister = pool.get_first_canister_with_name(parent_name)
                         .ok_or_else(|| anyhow!("No such canister {}", parent_name))?;
                     let parent_canister_info = parent_canister.get_info();
@@ -279,10 +280,10 @@ pub trait CanisterBuilder {
                                 env,
                                 cache,
                                 pool,
-                                &Import::Canister(child.clone()),
+                                &MotokoImport::Canister(child.clone()),
                             )?;
 
-                            let child_node = Import::Canister(child.clone());
+                            let child_node = MotokoImport::Canister(child.clone());
                             let child_node_index =
                                 env.get_imports().borrow_mut().update_node(&child_node);
                             env.get_imports().borrow_mut().update_edge(
@@ -294,7 +295,7 @@ pub trait CanisterBuilder {
                         return Ok(());
                     }
                 }
-                Import::FullPath(path) => Some(path.clone()),
+                MotokoImport::FullPath(path) => Some(path.clone()),
                 _ => None,
             };
             if let Some(file) = file {
@@ -308,9 +309,9 @@ pub trait CanisterBuilder {
                 let output = String::from_utf8_lossy(&output.stdout);
 
                 for line in output.lines() {
-                    let child = Import::try_from(line).context("Failed to create MotokoImport.")?;
+                    let child = MotokoImport::try_from(line).context("Failed to create MotokoImport.")?;
                     match &child {
-                        Import::Canister(_) | Import::FullPath(_) => {
+                        MotokoImport::Canister(_) | MotokoImport::FullPath(_) => {
                             read_dependencies_recursive(env, cache, pool, &child)?
                         }
                         _ => {}
@@ -331,7 +332,7 @@ pub trait CanisterBuilder {
             env,
             cache,
             pool,
-            &Import::Canister(info.get_name().to_string()),
+            &MotokoImport::Canister(info.get_name().to_string()),
         )?;
 
         Ok(())
@@ -364,7 +365,7 @@ pub trait CanisterBuilder {
             let imports = env.get_imports().borrow();
             let start = if let Some(node_index) = imports
                 .nodes()
-                .get(&Import::Canister(canister_info.get_name().to_string()))
+                .get(&MotokoImport::Canister(canister_info.get_name().to_string()))
             {
                 *node_index
             } else {
@@ -379,12 +380,12 @@ pub trait CanisterBuilder {
                     let subnode = &imports.graph()[import];
                     if top_level_cur {
                         assert!(
-                            matches!(subnode, Import::Canister(_)),
+                            matches!(subnode, MotokoImport::Canister(_)),
                             "the top-level import must be a canister"
                         );
                     }
                     let imported_file = match subnode {
-                        Import::Canister(canister_name) => {
+                        MotokoImport::Canister(canister_name) => {
                             if let Some(canister) =
                                 pool.get_first_canister_with_name(canister_name.as_str())
                             {
@@ -406,14 +407,14 @@ pub trait CanisterBuilder {
                                 None
                             }
                         }
-                        Import::Ic(_canister_id) => {
+                        MotokoImport::Ic(_canister_id) => {
                             continue;
                         }
-                        Import::Lib(_path) => {
+                        MotokoImport::Lib(_path) => {
                             // Skip libs, all changes by package managers don't modify existing directories but create new ones.
                             continue;
                         }
-                        Import::FullPath(full_path) => Some(full_path.clone()),
+                        MotokoImport::FullPath(full_path) => Some(full_path.clone()),
                     };
                     if let Some(imported_file) = imported_file {
                         let imported_file_metadata =
@@ -554,19 +555,7 @@ pub fn execute_command(
     if command.is_empty() {
         return Ok(vec![]);
     }
-    let words = shell_words::split(command)
-        .with_context(|| format!("Cannot parse command '{}'.", command))?;
-    let canonical_result = dfx_core::fs::canonicalize(&cwd.join(&words[0]));
-    let mut cmd = if words.len() == 1 && canonical_result.is_ok() {
-        // If the command is a file, execute it directly.
-        let file = canonical_result.unwrap();
-        Command::new(file)
-    } else {
-        // Execute the command in `sh -c` to allow pipes.
-        let mut sh_cmd = Command::new("sh");
-        sh_cmd.args(["-c", command]);
-        sh_cmd
-    };
+    let mut cmd = direct_or_shell_command(command, cwd)?;
 
     if !catch_output {
         cmd.stdin(Stdio::inherit())
@@ -658,9 +647,10 @@ pub fn get_and_write_environment_variables<'a>(
     if let Ok(id) = info.get_canister_id() {
         vars.push((Borrowed("CANISTER_ID"), Owned(format!("{}", id).into())));
     }
-    if let Some(path) = info.get_output_idl_path() {
-        vars.push((Borrowed("CANISTER_CANDID_PATH"), Owned(path.into())))
-    }
+    vars.push((
+        Borrowed("CANISTER_CANDID_PATH"),
+        Owned(info.get_output_idl_path().into()),
+    ));
 
     if let Some(write_path) = write_path {
         write_environment_variables(&vars, write_path)?;

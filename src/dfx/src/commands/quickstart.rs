@@ -7,7 +7,7 @@ use crate::{
         agent::create_agent_environment,
         environment::Environment,
         error::DfxResult,
-        identity::wallet::{set_wallet_id, wallet_canister_id},
+        identity::wallet::set_wallet_id,
         ledger_types::Memo,
         nns_types::{
             account_identifier::AccountIdentifier,
@@ -24,6 +24,7 @@ use crate::{
 use anyhow::{bail, Context};
 use candid::Principal;
 use clap::Parser;
+use dfx_core::identity::wallet::wallet_canister_id;
 use dialoguer::{Confirm, Input};
 use ic_agent::Agent;
 use ic_utils::interfaces::{
@@ -65,7 +66,7 @@ pub fn exec(env: &dyn Environment, _: QuickstartOpts) -> DfxResult {
         if let Some(wallet) = wallet {
             step_print_wallet(agent, wallet).await?;
         } else if Confirm::new()
-            .with_prompt("Import an existing wallet?")
+            .with_prompt("MotokoImport an existing wallet?")
             .interact()?
         {
             step_import_wallet(&env, agent, ident).await?;
@@ -110,7 +111,6 @@ async fn step_import_wallet(env: &dyn Environment, agent: &Agent, ident: &str) -
         let wasm = wallet_wasm(env.get_logger())?;
         mgmt.install_code(&id, &wasm)
             .with_mode(InstallMode::Install)
-            .call_and_wait()
             .await?;
         WalletCanister::create(agent, id).await?
     };

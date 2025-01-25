@@ -1,16 +1,19 @@
 use crate::error::AssetLoadConfigError;
 use crate::error::AssetLoadConfigError::{LoadRuleFailed, MalformedAssetConfigFile};
 use crate::error::GetAssetConfigError;
-use crate::error::GetAssetConfigError::{AssetConfigNotFound, InvalidPath};
+use crate::error::GetAssetConfigError::AssetConfigNotFound;
+use crate::security_policy::SecurityPolicy;
 use derivative::Derivative;
 use globset::GlobMatcher;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
+
+use super::content_encoder::ContentEncoder;
 
 pub(crate) const ASSETS_CONFIG_FILENAME_JSON: &str = ".ic-assets.json";
 pub(crate) const ASSETS_CONFIG_FILENAME_JSON5: &str = ".ic-assets.json5";
@@ -25,6 +28,54 @@ pub struct AssetConfig {
     pub(crate) enable_aliasing: Option<bool>,
     #[derivative(Default(value = "Some(true)"))]
     pub(crate) allow_raw_access: Option<bool>,
+    pub(crate) encodings: Option<Vec<ContentEncoder>>,
+    pub(crate) security_policy: Option<SecurityPolicy>,
+    pub(crate) disable_security_policy_warning: Option<bool>,
+}
+
+impl AssetConfig {
+    pub fn combined_headers(&self) -> Option<HeadersConfig> {
+        match (self.headers.as_ref(), self.security_policy) {
+            (None, None) => None,
+            (None, Some(policy)) => Some(policy.to_headers()),
+            (Some(custom_headers), None) => Some(custom_headers.clone()),
+            (Some(custom_headers), Some(policy)) => {
+                let mut headers = custom_headers.clone();
+                let custom_header_names: HashSet<String> =
+                    HashSet::from_iter(custom_headers.keys().map(|a| a.to_lowercase()));
+                for (policy_header_name, policy_header_value) in policy.to_headers() {
+                    if !custom_header_names.contains(&policy_header_name.to_lowercase()) {
+                        headers.insert(policy_header_name, policy_header_value);
+                    }
+                }
+                Some(headers)
+            }
+        }
+    }
+
+    pub fn warn_about_standard_security_policy(&self) -> bool {
+        let warning_disabled = self.disable_security_policy_warning == Some(true);
+        let standard_policy = self.security_policy == Some(SecurityPolicy::Standard);
+        standard_policy && !warning_disabled
+    }
+
+    pub fn warn_about_no_security_policy(&self) -> bool {
+        let warning_disabled = self.disable_security_policy_warning == Some(true);
+        let no_policy = self.security_policy.is_none();
+        no_policy && !warning_disabled
+    }
+
+    /// If the security policy is `"hardened"` it is expected that some custom headers are present.
+    /// This cannot be silenced with `disable_security_policy_warning`.
+    pub fn warn_about_missing_hardening_headers(&self) -> bool {
+        let is_hardened = self.security_policy == Some(SecurityPolicy::Hardened);
+        let has_headers = self
+            .headers
+            .as_ref()
+            .map(|headers| !headers.is_empty())
+            .unwrap_or_default();
+        is_hardened && !has_headers
+    }
 }
 
 pub(crate) type HeadersConfig = BTreeMap<String, String>;
@@ -60,6 +111,12 @@ pub struct AssetConfigRule {
     /// Redirects the traffic from .raw.icp0.io domain to .icp0.io
     #[serde(skip_serializing_if = "Option::is_none")]
     allow_raw_access: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    encodings: Option<Vec<ContentEncoder>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    security_policy: Option<SecurityPolicy>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    disable_security_policy_warning: Option<bool>,
 }
 
 #[derive(Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -119,7 +176,7 @@ impl AssetSourceDirectoryConfiguration {
         &mut self,
         canonical_path: &Path,
     ) -> Result<AssetConfig, GetAssetConfigError> {
-        let parent_dir = dfx_core::fs::parent(canonical_path).map_err(InvalidPath)?;
+        let parent_dir = dfx_core::fs::parent(canonical_path)?;
         Ok(self
             .config_map
             .get(&parent_dir)
@@ -217,7 +274,7 @@ impl AssetConfigTreeNode {
     }
 
     /// Fetches asset config in a recursive fashion.
-    /// Marks config rules as *used*, whenever the rule' glob patter matched querried file.
+    /// Marks config rules as *used*, whenever the rule' glob patter matched queried file.
     fn get_config(&mut self, canonical_path: &Path) -> AssetConfig {
         let base_config = match &self.parent {
             Some(parent) => parent.clone().lock().unwrap().get_config(canonical_path),
@@ -256,6 +313,18 @@ impl AssetConfig {
         if other.allow_raw_access.is_some() {
             self.allow_raw_access = other.allow_raw_access;
         }
+
+        if other.encodings.is_some() {
+            self.encodings = other.encodings.clone();
+        }
+
+        if other.security_policy.is_some() {
+            self.security_policy = other.security_policy;
+        }
+
+        if other.disable_security_policy_warning.is_some() {
+            self.disable_security_policy_warning = other.disable_security_policy_warning;
+        }
         self
     }
 }
@@ -263,9 +332,11 @@ impl AssetConfig {
 /// This module contains various utilities needed for serialization/deserialization
 /// and pretty-printing of the `AssetConfigRule` data structure.
 mod rule_utils {
-    use super::{AssetConfig, AssetConfigRule, CacheConfig, HeadersConfig, Maybe};
+    use super::{AssetConfig, AssetConfigRule, CacheConfig, HeadersConfig, Maybe, SecurityPolicy};
+    use crate::asset::content_encoder::ContentEncoder;
     use crate::error::LoadRuleError;
     use globset::{Glob, GlobMatcher};
+    use itertools::Itertools;
     use serde::{Deserialize, Serializer};
     use serde_json::Value;
     use std::collections::BTreeMap;
@@ -345,6 +416,9 @@ mod rule_utils {
         ignore: Option<bool>,
         enable_aliasing: Option<bool>,
         allow_raw_access: Option<bool>,
+        encodings: Option<Vec<ContentEncoder>>,
+        security_policy: Option<SecurityPolicy>,
+        disable_security_policy_warning: Option<bool>,
     }
 
     impl AssetConfigRule {
@@ -356,6 +430,9 @@ mod rule_utils {
                 ignore,
                 enable_aliasing,
                 allow_raw_access,
+                encodings,
+                security_policy,
+                disable_security_policy_warning,
             }: InterimAssetConfigRule,
             config_file_parent_dir: &Path,
         ) -> Result<Self, LoadRuleError> {
@@ -378,6 +455,9 @@ mod rule_utils {
                 used: false,
                 enable_aliasing,
                 allow_raw_access,
+                encodings,
+                security_policy,
+                disable_security_policy_warning,
             })
         }
     }
@@ -406,6 +486,12 @@ mod rule_utils {
                         }
                     }
                 }
+                if let Some(encodings) = self.encodings.as_ref() {
+                    s.push_str(&format!(", {} encodings", encodings.len()));
+                }
+                if let Some(policy) = self.security_policy {
+                    s.push_str(&format!(" and security policy '{policy}'"));
+                }
                 s.push(')');
             }
 
@@ -432,6 +518,9 @@ mod rule_utils {
                     }
                 ));
             }
+            if let Some(policy) = self.security_policy {
+                s.push_str(&format!("  - Security policy: {policy}"));
+            }
             if let Some(aliasing) = self.enable_aliasing {
                 s.push_str(&format!(
                     "  - URL path aliasing: {}\n",
@@ -447,7 +536,17 @@ mod rule_utils {
                     ));
                 }
             }
-
+            if let Some(encodings) = self.encodings.as_ref() {
+                s.push_str(&format!(
+                    "  - encodings: {}",
+                    encodings.iter().map(|enc| enc.to_string()).join(",")
+                ));
+            }
+            if let Some(disable_warning) = self.disable_security_policy_warning {
+                s.push_str(&format!(
+                    "  - disable standard security policy warning: {disable_warning}"
+                ));
+            }
             write!(f, "{}", s)
         }
     }
@@ -683,6 +782,40 @@ mod with_tempdir {
     }
 
     #[test]
+    fn overriding_encodings() {
+        let cfg = Some(HashMap::from([
+            (
+                "".to_string(),
+                r#"[{"match": "**/*.txt", "encodings": []},{"match": "**/*.unknown", "encodings": ["gzip"]}]"#.to_string(),
+            ),
+        ]));
+        let assets_temp_dir = create_temporary_assets_directory(cfg, 7);
+        let assets_dir = assets_temp_dir.path().canonicalize().unwrap();
+
+        let mut assets_config = AssetSourceDirectoryConfiguration::load(&assets_dir).unwrap();
+        // override default (.unknown defaults to empty list)
+        assert_eq!(
+            assets_config
+                .get_asset_config(assets_dir.join("file.unknown").as_path())
+                .unwrap(),
+            AssetConfig {
+                encodings: Some(Vec::from([ContentEncoder::Gzip])),
+                ..Default::default()
+            }
+        );
+        // override default with empty list (.txt defaults to gzip)
+        assert_eq!(
+            assets_config
+                .get_asset_config(assets_dir.join("text.txt").as_path())
+                .unwrap(),
+            AssetConfig {
+                encodings: Some(Vec::from([])),
+                ..Default::default()
+            }
+        );
+    }
+
+    #[test]
     fn prioritization() {
         // 1. the most deeply nested config file takes precedens over the one in parent dir
         // 2. order of rules withing file matters - last rule in config file takes precedens over the first one
@@ -891,7 +1024,7 @@ mod with_tempdir {
         assert_eq!(
             assets_config.as_ref().err().unwrap().to_string(),
             format!(
-                "Failed to read {} as string",
+                "failed to read {} as string",
                 assets_dir
                     .join(ASSETS_CONFIG_FILENAME_JSON)
                     .as_path()

@@ -37,6 +37,7 @@ set_local_network_bitcoin_enabled() {
 }
 
 @test "dfx restarts replica when ic-btc-adapter restarts" {
+  [[ "$USE_POCKETIC" ]] && skip "skipped for pocketic: PocketIC does not expose bitcoin adapter"
   dfx_new_assets hello
   dfx_start --enable-bitcoin
 
@@ -55,19 +56,19 @@ set_local_network_bitcoin_enabled() {
   assert_process_exits "$BTC_ADAPTER_PID" 15s
   assert_process_exits "$REPLICA_PID" 15s
 
-  timeout 15s sh -c \
+  timeout 30s sh -c \
     'until dfx ping; do echo waiting for replica to restart; sleep 1; done' \
     || (echo "replica did not restart" && ps aux && exit 1)
   wait_until_replica_healthy
 
   # Sometimes initially get an error like:
-  #     IC0304: Attempt to execute a message on canister <>> which contains no Wasm module
+  #     IC0537: Attempt to execute a message on canister <>> which contains no Wasm module
   # but the condition clears.
   timeout 30s sh -c \
     "until dfx canister call hello_backend greet '(\"wait 1\")'; do echo waiting for any canister call to succeed; sleep 1; done" \
     || (echo "canister call did not succeed") # but continue, for better error reporting
   # even after the above, still sometimes fails with
-  #     IC0515: Certified state is not available yet. Please try again...
+  #     IC0208: Certified state is not available yet. Please try again...
   sleep 10
   timeout 30s sh -c \
     "until dfx canister call hello_backend greet '(\"wait 2\")'; do echo waiting for any canister call to succeed; sleep 1; done" \
@@ -79,13 +80,14 @@ set_local_network_bitcoin_enabled() {
   ID=$(dfx canister id hello_frontend)
 
   timeout 15s sh -c \
-    "until curl --fail http://localhost:\$(cat \"$E2E_SHARED_LOCAL_NETWORK_DATA_DIRECTORY/webserver-port\")/sample-asset.txt?canisterId=$ID; do echo waiting for icx-proxy to restart; sleep 1; done" \
-    || (echo "icx-proxy did not restart" && ps aux && exit 1)
+    "until curl --fail http://localhost:\$(cat \"$E2E_SHARED_LOCAL_NETWORK_DATA_DIRECTORY/webserver-port\")/sample-asset.txt?canisterId=$ID; do echo waiting for pocket-ic proxy to restart; sleep 1; done" \
+    || (echo "pocket-ic proxy did not restart" && ps aux && exit 1)
 
   assert_command curl --fail http://localhost:"$(get_webserver_port)"/sample-asset.txt?canisterId="$ID"
 }
 
 @test "dfx start --bitcoin-node <node> implies --enable-bitcoin" {
+  [[ "$USE_POCKETIC" ]] && skip "skipped for pocketic: PocketIC does not expose bitcoin adapter"
   dfx_new hello
   dfx_start "--bitcoin-node" "127.0.0.1:18444"
 
@@ -93,6 +95,7 @@ set_local_network_bitcoin_enabled() {
 }
 
 @test "dfx start --enable-bitcoin with no other configuration succeeds" {
+  [[ "$USE_POCKETIC" ]] && skip "skipped for pocketic: PocketIC does not expose bitcoin adapter"
   dfx_new hello
 
   dfx_start --enable-bitcoin
@@ -111,6 +114,7 @@ set_local_network_bitcoin_enabled() {
 }
 
 @test "can enable bitcoin through default configuration - dfx start" {
+  [[ "$USE_POCKETIC" ]] && skip "skipped for pocketic: PocketIC does not expose bitcoin adapter"
   dfx_new hello
   define_project_network
   set_project_default_bitcoin_enabled
@@ -121,6 +125,7 @@ set_local_network_bitcoin_enabled() {
 }
 
 @test "can enable bitcoin through shared local network - dfx start" {
+  [[ "$USE_POCKETIC" ]] && skip "skipped for pocketic: PocketIC does not expose bitcoin adapter"
   dfx_new hello
   set_shared_local_network_bitcoin_enabled
 
@@ -130,6 +135,7 @@ set_local_network_bitcoin_enabled() {
 }
 
 @test "can enable bitcoin through local network configuration - dfx start" {
+  [[ "$USE_POCKETIC" ]] && skip "skipped for pocketic: PocketIC does not expose bitcoin adapter"
   dfx_new hello
   set_local_network_bitcoin_enabled
 
@@ -139,6 +145,7 @@ set_local_network_bitcoin_enabled() {
 }
 
 @test "dfx start with both bitcoin and canister http enabled" {
+  [[ "$USE_POCKETIC" ]] && skip "skipped for pocketic: PocketIC does not expose bitcoin adapter"
   dfx_new hello
 
   dfx_start --enable-bitcoin --enable-canister-http
@@ -163,13 +170,13 @@ set_local_network_bitcoin_enabled() {
 @test "can call bitcoin API of the management canister" {
   install_asset bitcoin
   dfx_start --enable-bitcoin
+  dfx identity get-wallet
 
   # the non-query Bitcoin API can only be called by a canister not an agent
   # we need to proxy the call through the wallet canister
-  WALLET_ID=$(dfx identity get-wallet)
 
   # bitcoin_get_balance
-  assert_command dfx canister call --wallet "$WALLET_ID" aaaaa-aa --candid bitcoin.did bitcoin_get_balance '(
+  assert_command dfx canister call --wallet default aaaaa-aa --candid bitcoin.did bitcoin_get_balance '(
   record {
     network = variant { regtest };
     address = "bcrt1qu58aj62urda83c00eylc6w34yl2s6e5rkzqet7";
@@ -179,7 +186,7 @@ set_local_network_bitcoin_enabled() {
   assert_eq "(0 : nat64)"
 
   # bitcoin_get_utxos
-  assert_command dfx canister call --wallet "$WALLET_ID" aaaaa-aa --candid bitcoin.did bitcoin_get_utxos '(
+  assert_command dfx canister call --wallet default aaaaa-aa --candid bitcoin.did bitcoin_get_utxos '(
   record {
     network = variant { regtest };
     filter = opt variant { min_confirmations = 1 : nat32 };
@@ -189,34 +196,11 @@ set_local_network_bitcoin_enabled() {
   assert_contains "tip_height = 0 : nat32;"
 
   # bitcoin_get_current_fee_percentiles
-  assert_command dfx canister call --wallet "$WALLET_ID" aaaaa-aa --candid bitcoin.did bitcoin_get_current_fee_percentiles '(record { network = variant { regtest } })'
+  assert_command dfx canister call --wallet default aaaaa-aa --candid bitcoin.did bitcoin_get_current_fee_percentiles '(record { network = variant { regtest } })'
 
   # bitcoin_send_transaction
   # It's hard to test this without a real transaction, but we can at least check that the call fails.
   # The error message indicates that the argument is in correct format, only the inner transaction is malformed.
-  assert_command_fail dfx canister call --wallet "$WALLET_ID" aaaaa-aa --candid bitcoin.did bitcoin_send_transaction '(record { transaction = vec {0:nat8}; network = variant { regtest } })'
+  assert_command_fail dfx canister call --wallet default aaaaa-aa --candid bitcoin.did bitcoin_send_transaction '(record { transaction = vec {0:nat8}; network = variant { regtest } })'
   assert_contains "send_transaction failed: MalformedTransaction"
-
-  # the query Bitcoin API can be called directly
-
-  # bitcoin_get_balance_query
-  assert_command dfx canister call --query aaaaa-aa --candid bitcoin.did bitcoin_get_balance_query '(
-  record {
-    network = variant { regtest };
-    address = "bcrt1qu58aj62urda83c00eylc6w34yl2s6e5rkzqet7";
-    min_confirmations = opt (1 : nat32);
-  }
-)'
-  # shellcheck disable=SC2154
-  assert_eq "(0 : nat64)" "$stdout"
-
-  # bitcoin_get_balance_query
-  assert_command dfx canister call --query aaaaa-aa --candid bitcoin.did bitcoin_get_utxos_query '(
-  record {
-    network = variant { regtest };
-    filter = opt variant { min_confirmations = 1 : nat32 };
-    address = "bcrt1qu58aj62urda83c00eylc6w34yl2s6e5rkzqet7";
-  }
-)'
-  assert_contains "tip_height = 0 : nat32;"
 }

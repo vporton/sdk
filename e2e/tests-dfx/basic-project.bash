@@ -15,9 +15,9 @@ teardown() {
 @test "build + install + call + request-status -- greet_mo" {
   dfx_new hello
   install_asset greet
-  dfx_start
-  dfx canister create --all
-  dfx build
+  dfx_start --artificial-delay 10000
+  dfx canister create hello_backend
+  dfx build hello_backend
   # INSTALL_REQUEST_ID=$(dfx canister install hello_backend --async)
   # dfx canister request-status $INSTALL_REQUEST_ID
   dfx canister install hello_backend
@@ -40,7 +40,7 @@ teardown() {
   assert_eq '("Hello, Blueberry!")'
 
   # Call using the wallet's call forwarding
-  assert_command dfx canister call --async hello_backend greet Blueberry --wallet="$(dfx identity get-wallet)"
+  assert_command dfx canister call --async hello_backend greet Blueberry --wallet=default
   # At this point $output is the request ID.
   # shellcheck disable=SC2154
   assert_command dfx canister request-status "$stdout" "$(dfx identity get-wallet)"
@@ -57,9 +57,9 @@ teardown() {
 @test "build + install + call + request-status -- counter_mo" {
   dfx_new hello
   install_asset counter
-  dfx_start
-  dfx canister create --all
-  dfx build
+  dfx_start --artificial-delay 10000
+  dfx canister create hello_backend
+  dfx build hello_backend
   dfx canister install hello_backend
 
   assert_command dfx canister call hello_backend read
@@ -100,7 +100,7 @@ teardown() {
   assert_eq "(1_337 : nat)"
 
   # Call using the wallet's call forwarding
-  assert_command dfx canister call hello_backend read --async --wallet="$(dfx identity get-wallet)"
+  assert_command dfx canister call hello_backend read --async --wallet=default
   assert_command dfx canister request-status "$stdout" "$(dfx identity get-wallet)"
   assert_eq \
 '(

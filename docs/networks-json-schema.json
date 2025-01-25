@@ -46,7 +46,6 @@
         "nodes": {
           "title": "Available Nodes",
           "description": "Addresses of nodes to connect to (in case discovery from seeds is not possible/sufficient).",
-          "default": null,
           "type": [
             "array",
             "null"
@@ -106,17 +105,17 @@
       }
     },
     "ConfigDefaultsProxy": {
-      "description": "Configuration for icx-proxy.",
+      "description": "Configuration for the HTTP gateway.",
       "type": "object",
-      "required": [
-        "domain"
-      ],
       "properties": {
         "domain": {
           "description": "A list of domains that can be served. These are used for canister resolution [default: localhost]",
-          "allOf": [
+          "anyOf": [
             {
               "$ref": "#/definitions/SerdeVec_for_String"
+            },
+            {
+              "type": "null"
             }
           ]
         }

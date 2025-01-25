@@ -31,11 +31,6 @@ use icrc_ledger_types::icrc2::approve::ApproveError;
 use icrc_ledger_types::icrc2::transfer_from::TransferFromError;
 use slog::{info, Logger};
 
-/// Cycles ledger feature flag to turn off behavior that would be confusing while cycles ledger is not out of beta yet.
-pub fn cycles_ledger_enabled() -> bool {
-    std::env::var("DFX_CYCLES_LEDGER_SUPPORT_ENABLE").is_ok()
-}
-
 const ICRC1_BALANCE_OF_METHOD: &str = "icrc1_balance_of";
 const ICRC1_TRANSFER_METHOD: &str = "icrc1_transfer";
 const ICRC2_APPROVE_METHOD: &str = "icrc2_approve";
@@ -111,7 +106,6 @@ pub async fn transfer(
             .with_arg(arg)
             .build()
             .map(|result: (Result<BlockIndex, TransferError>,)| (result.0,))
-            .call_and_wait()
             .await
             .map(|(result,)| result)
         {
@@ -170,7 +164,6 @@ pub async fn transfer_from(
             .with_arg(arg)
             .build()
             .map(|result: (Result<BlockIndex, TransferFromError>,)| (result.0,))
-            .call_and_wait()
             .await
             .map(|(result,)| result)
         {
@@ -234,7 +227,6 @@ pub async fn approve(
             .with_arg(arg)
             .build()
             .map(|result: (Result<BlockIndex, ApproveError>,)| (result.0,))
-            .call_and_wait()
             .await
             .map(|(result,)| result)
         {
@@ -283,7 +275,6 @@ pub async fn withdraw(
             .with_arg(arg)
             .build()
             .map(|result: (Result<BlockIndex, WithdrawError>,)| (result.0,))
-            .call_and_wait()
             .await
             .map(|(result,)| result)
         {
@@ -355,7 +346,6 @@ pub async fn create_with_cycles_ledger(
         match agent
             .update(&CYCLES_LEDGER_CANISTER_ID, CREATE_CANISTER_METHOD)
             .with_arg(arg.clone())
-            .call_and_wait()
             .await
         {
             Ok(result) => break result,
@@ -409,7 +399,6 @@ pub async fn wallet_deposit_to_cycles_ledger(
             Argument::from_candid((DepositArg { to, memo: None },)),
             cycles_to_withdraw,
         )
-        .call_and_wait()
         .await
         .context("Failed deposit call.")
 }

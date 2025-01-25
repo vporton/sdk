@@ -112,8 +112,14 @@ impl Canister {
     }
 
     #[context("Failed while trying to generate type declarations for '{}'.", self.info.get_name())]
-    pub fn generate(&self, pool: &CanisterPool, build_config: &BuildConfig) -> DfxResult {
-        self.builder.generate(pool, &self.info, build_config)
+    pub fn generate(
+        &self,
+        logger: &Logger,
+        pool: &CanisterPool,
+        build_config: &BuildConfig,
+    ) -> DfxResult {
+        self.builder
+            .generate(logger, pool, &self.info, build_config)
     }
 
     #[context("Failed to post-process wasm of canister '{}'.", self.info.get_name())]
@@ -142,14 +148,8 @@ impl Canister {
         // optimize or shrink
         if let Some(level) = info.get_optimize() {
             trace!(logger, "Optimizing Wasm at level {}", level);
-            ic_wasm::optimize::optimize(
-                &mut m,
-                &wasm_opt_level_convert(level),
-                false,
-                &None,
-                false,
-            )
-            .context("Failed to optimize the Wasm module.")?;
+            ic_wasm::optimize::optimize(&mut m, &wasm_opt_level_convert(level), false, &None, true)
+                .context("Failed to optimize the Wasm module.")?;
             modified = true;
         } else if info.get_shrink() == Some(true)
             || (info.get_shrink().is_none() && (info.is_rust() || info.is_motoko()))
@@ -450,14 +450,14 @@ fn check_valid_subtype(compiled_idl_path: &Path, specified_idl_path: &Path) -> D
 ///
 /// TODO: Copying this type uses `String.clone()` what may be inefficient.
 #[derive(Clone, Debug, PartialOrd, Ord, PartialEq, Eq, Hash)]
-pub enum Import {
+pub enum MotokoImport {
     Canister(String),
     Ic(String),
     Lib(String), // TODO: Unused, because package manager never update existing files (but create new dirs)
     FullPath(PathBuf),
 }
 
-impl Display for Import {
+impl Display for MotokoImport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Canister(name) => write!(f, "canister {}", name),
@@ -589,7 +589,7 @@ impl CanisterPool {
         let source_ids = imports.nodes();
         let start: Vec<_> = toplevel_canisters
             .iter()
-            .map(|canister| Import::Canister(canister.get_name().to_string()))
+            .map(|canister| MotokoImport::Canister(canister.get_name().to_string()))
             .collect();
         let start_nodes: Vec<_> = start
             .into_iter()
@@ -610,7 +610,7 @@ impl CanisterPool {
             // Add start node:
             let start = source_graph.node_weight(start_node).unwrap();
             let start_name = match start {
-                Import::Canister(name) => name,
+                MotokoImport::Canister(name) => name,
                 _ => {
                     panic!("programming error");
                 }
@@ -621,7 +621,7 @@ impl CanisterPool {
                 source_graph,
                 |&s| {
                     let source_id = source_graph.node_weight(s);
-                    if let Some(Import::Canister(_)) = source_id {
+                    if let Some(MotokoImport::Canister(_)) = source_id {
                         Ok(true)
                     } else {
                         Ok(false)
@@ -630,7 +630,7 @@ impl CanisterPool {
                 |&source_parent_id, &source_child_id| {
                     let parent = source_graph.node_weight(source_parent_id).unwrap();
                     let parent_name = match parent {
-                        Import::Canister(name) => name,
+                        MotokoImport::Canister(name) => name,
                         _ => {
                             panic!("programming error");
                         }
@@ -638,7 +638,7 @@ impl CanisterPool {
 
                     let child = source_graph.node_weight(source_child_id).unwrap();
                     let child_name = match child {
-                        Import::Canister(name) => name,
+                        MotokoImport::Canister(name) => name,
                         _ => {
                             panic!("programming error");
                         }
@@ -670,7 +670,7 @@ impl CanisterPool {
                     .get_imports()
                     .borrow()
                     .nodes()
-                    .get(&Import::Canister(canister.get_name().to_owned()))
+                    .get(&MotokoImport::Canister(canister.get_name().to_owned()))
                     .unwrap();
                 let imports = env.get_imports().borrow();
                 let neighbors = imports.graph().neighbors(parent_node);
@@ -685,7 +685,7 @@ impl CanisterPool {
                         })
                     }) // TODO: slow
                     .filter_map(|import| {
-                        if let Import::Canister(name) = import {
+                        if let MotokoImport::Canister(name) = import {
                             self.get_first_canister_with_name(&name)
                                 .map(|canister| (name, canister))
                         } else {
@@ -732,7 +732,7 @@ impl CanisterPool {
             let maybe_from = if let Some(remote_candid) = canister.info.get_remote_candid() {
                 Some(remote_candid)
             } else {
-                canister.info.get_output_idl_path()
+                Some(canister.info.get_output_idl_path())
             };
             // TODO: It tries to copy non-existing files (not yet compiled canisters..)
             if let Some(from) = maybe_from.as_ref() {
@@ -761,8 +761,8 @@ impl CanisterPool {
             } else {
                 warn!(
                     log,
-                    "Canister '{}' has no .did file configured.",
-                    canister.get_name()
+                    ".did file for canister '{}' does not exist.",
+                    canister.get_name(),
                 );
             }
         }
@@ -1058,9 +1058,10 @@ impl CanisterPool {
             self.canisters
                 .iter()
                 .filter(|can| canister_names.contains(&can.info.get_name().to_string()))
+                .map(Arc::as_ref)
                 .collect()
         } else {
-            self.canisters.iter().collect()
+            self.canisters.iter().map(Arc::as_ref).collect()
         }
     }
 }

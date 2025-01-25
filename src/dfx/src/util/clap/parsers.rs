@@ -1,4 +1,6 @@
 use byte_unit::{Byte, ByteUnit};
+use candid::Principal;
+use ic_utils::interfaces::management_canister::LogVisibility;
 use icrc_ledger_types::icrc1::account::Subaccount;
 use rust_decimal::Decimal;
 use std::{path::PathBuf, str::FromStr};
@@ -126,6 +128,21 @@ pub fn wasm_memory_limit_parser(memory_limit: &str) -> Result<Byte, String> {
         }
     }
     Err("Must be a value between 0..256 TiB inclusive (e.g. `2GiB`).".to_string())
+}
+
+pub fn log_visibility_parser(log_visibility: &str) -> Result<LogVisibility, String> {
+    match log_visibility {
+        "public" => Ok(LogVisibility::Public),
+        "controllers" => Ok(LogVisibility::Controllers),
+        _ => Err("Must be `controllers` or `public`.".to_string()),
+    }
+}
+
+pub fn principal_parser(principal_text: &str) -> Result<Principal, String> {
+    match Principal::from_text(principal_text) {
+        Ok(principal) => Ok(principal),
+        _ => Err(("Failed to convert to a principal.").to_string()),
+    }
 }
 
 pub fn freezing_threshold_parser(freezing_threshold: &str) -> Result<u64, String> {

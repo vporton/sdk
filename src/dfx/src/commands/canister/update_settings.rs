@@ -1,11 +1,14 @@
+use crate::lib::canister_logs::log_visibility::LogVisibilityOpt;
 use crate::lib::diagnosis::DiagnosedError;
 use crate::lib::environment::Environment;
 use crate::lib::error::{DfxError, DfxResult};
 use crate::lib::ic_attributes::{
-    get_compute_allocation, get_freezing_threshold, get_memory_allocation,
+    get_compute_allocation, get_freezing_threshold, get_log_visibility, get_memory_allocation,
     get_reserved_cycles_limit, get_wasm_memory_limit, CanisterSettings,
 };
-use crate::lib::operations::canister::{get_canister_status, update_settings};
+use crate::lib::operations::canister::{
+    get_canister_status, skip_remote_canister, update_settings,
+};
 use crate::lib::root_key::fetch_root_key_if_needed;
 use crate::util::clap::parsers::{
     compute_allocation_parser, freezing_threshold_parser, memory_allocation_parser,
@@ -16,10 +19,11 @@ use byte_unit::Byte;
 use candid::Principal as CanisterId;
 use clap::{ArgAction, Parser};
 use dfx_core::cli::ask_for_consent;
-use dfx_core::error::identity::instantiate_identity_from_name::InstantiateIdentityFromNameError::GetIdentityPrincipalFailed;
+use dfx_core::error::identity::InstantiateIdentityFromNameError::GetIdentityPrincipalFailed;
 use dfx_core::identity::CallSender;
 use fn_error_context::context;
 use ic_agent::identity::Identity;
+use ic_utils::interfaces::management_canister::StatusCallResult;
 
 /// Update one or more of a canister's settings (i.e its controller, compute allocation, or memory allocation.)
 #[derive(Parser, Debug)]
@@ -87,6 +91,9 @@ pub struct UpdateSettingsOpts {
     #[arg(long, value_parser = wasm_memory_limit_parser)]
     wasm_memory_limit: Option<Byte>,
 
+    #[command(flatten)]
+    log_visibility_opt: Option<LogVisibilityOpt>,
+
     /// Freezing thresholds above ~1.5 years require this flag as confirmation.
     #[arg(long)]
     confirm_very_long_freezing_threshold: bool,
@@ -151,9 +158,29 @@ pub async fn exec(
             get_reserved_cycles_limit(opts.reserved_cycles_limit, config_interface, canister_name)?;
         let wasm_memory_limit =
             get_wasm_memory_limit(opts.wasm_memory_limit, config_interface, canister_name)?;
+        let mut current_status: Option<StatusCallResult> = None;
+        if let Some(log_visibility) = &opts.log_visibility_opt {
+            if log_visibility.require_current_settings() {
+                current_status = Some(get_canister_status(env, canister_id, call_sender).await?);
+            }
+        }
+        let log_visibility = get_log_visibility(
+            env,
+            opts.log_visibility_opt.as_ref(),
+            current_status.as_ref(),
+            config_interface,
+            canister_name,
+        )?;
         if let Some(added) = &opts.add_controller {
-            let status = get_canister_status(env, canister_id, call_sender).await?;
-            let mut existing_controllers = status.settings.controllers;
+            if current_status.is_none() {
+                current_status = Some(get_canister_status(env, canister_id, call_sender).await?);
+            }
+            let mut existing_controllers = current_status
+                .as_ref()
+                .unwrap()
+                .settings
+                .controllers
+                .clone();
             for s in added {
                 existing_controllers.push(controller_to_principal(env, s)?);
             }
@@ -163,8 +190,11 @@ pub async fn exec(
             let controllers = if opts.add_controller.is_some() {
                 controllers.as_mut().unwrap()
             } else {
-                let status = get_canister_status(env, canister_id, call_sender).await?;
-                controllers.get_or_insert(status.settings.controllers)
+                if current_status.is_none() {
+                    current_status =
+                        Some(get_canister_status(env, canister_id, call_sender).await?);
+                }
+                controllers.get_or_insert(current_status.unwrap().settings.controllers)
             };
             let removed = removed
                 .iter()
@@ -184,6 +214,7 @@ pub async fn exec(
             freezing_threshold,
             reserved_cycles_limit,
             wasm_memory_limit,
+            log_visibility,
         };
         update_settings(env, canister_id, settings, call_sender).await?;
         display_controller_update(&opts, canister_name_or_id);
@@ -191,8 +222,12 @@ pub async fn exec(
         // Update all canister settings.
         let config = env.get_config_or_anyhow()?;
         let config_interface = config.get_config();
+
         if let Some(canisters) = &config_interface.canisters {
             for canister_name in canisters.keys() {
+                if skip_remote_canister(env, canister_name)? {
+                    continue;
+                }
                 let mut controllers = controllers.clone();
                 let canister_id = canister_id_store.get(canister_name)?;
                 let compute_allocation = get_compute_allocation(
@@ -231,9 +266,32 @@ pub async fn exec(
                     Some(canister_name),
                 )
                 .with_context(|| format!("Failed to get Wasm memory limit for {canister_name}."))?;
+                let mut current_status: Option<StatusCallResult> = None;
+                if let Some(log_visibility) = &opts.log_visibility_opt {
+                    if log_visibility.require_current_settings() {
+                        current_status =
+                            Some(get_canister_status(env, canister_id, call_sender).await?);
+                    }
+                }
+                let log_visibility = get_log_visibility(
+                    env,
+                    opts.log_visibility_opt.as_ref(),
+                    current_status.as_ref(),
+                    Some(config_interface),
+                    Some(canister_name),
+                )
+                .with_context(|| format!("Failed to get log visibility for {canister_name}."))?;
                 if let Some(added) = &opts.add_controller {
-                    let status = get_canister_status(env, canister_id, call_sender).await?;
-                    let mut existing_controllers = status.settings.controllers;
+                    if current_status.is_none() {
+                        current_status =
+                            Some(get_canister_status(env, canister_id, call_sender).await?);
+                    }
+                    let mut existing_controllers = current_status
+                        .as_ref()
+                        .unwrap()
+                        .settings
+                        .controllers
+                        .clone();
                     for s in added {
                         existing_controllers.push(controller_to_principal(env, s)?);
                     }
@@ -243,8 +301,11 @@ pub async fn exec(
                     let controllers = if opts.add_controller.is_some() {
                         controllers.as_mut().unwrap()
                     } else {
-                        let status = get_canister_status(env, canister_id, call_sender).await?;
-                        controllers.get_or_insert(status.settings.controllers)
+                        if current_status.is_none() {
+                            current_status =
+                                Some(get_canister_status(env, canister_id, call_sender).await?);
+                        }
+                        controllers.get_or_insert(current_status.unwrap().settings.controllers)
                     };
                     let removed = removed
                         .iter()
@@ -264,6 +325,7 @@ pub async fn exec(
                     freezing_threshold,
                     reserved_cycles_limit,
                     wasm_memory_limit,
+                    log_visibility,
                 };
                 update_settings(env, canister_id, settings, call_sender).await?;
                 display_controller_update(&opts, canister_name);

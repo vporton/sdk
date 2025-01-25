@@ -12,9 +12,17 @@ use crate::error::network_config::{
 use crate::error::structured_file::StructuredFileError;
 use crate::json::load_json_file;
 use crate::json::structure::SerdeVec;
+use serde::{Deserialize, Serialize};
 use slog::{debug, info, Logger};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use time::OffsetDateTime;
+
+#[derive(Deserialize, Serialize, Debug)]
+pub struct NetworkMetadata {
+    pub created: OffsetDateTime,
+    pub settings_digest: String,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LocalNetworkScopeDescriptor {
@@ -30,6 +38,7 @@ pub struct LocalServerDescriptor {
     ///     $HOME/.local/share/dfx/network/local
     ///     $APPDATA/dfx/network/local
     pub data_directory: PathBuf,
+    pub settings_digest: Option<String>,
 
     pub bind_address: SocketAddr,
 
@@ -62,9 +71,11 @@ impl LocalServerDescriptor {
         scope: LocalNetworkScopeDescriptor,
         legacy_pid_path: Option<PathBuf>,
     ) -> Result<Self, NetworkConfigError> {
+        let settings_digest = None;
         let bind_address = to_socket_addr(&bind).map_err(ParseBindAddressFailed)?;
         Ok(LocalServerDescriptor {
             data_directory,
+            settings_digest,
             bind_address,
             bitcoin,
             canister_http,
@@ -78,7 +89,7 @@ impl LocalServerDescriptor {
     /// The contents of this file are different for each `dfx start --clean`
     /// or `dfx start` when the network data directory doesn't already exist
     pub fn network_id_path(&self) -> PathBuf {
-        self.data_directory.join("network-id")
+        self.data_dir_by_settings_digest().join("network-id")
     }
 
     /// This file contains the pid of the process started with `dfx start`
@@ -94,11 +105,6 @@ impl LocalServerDescriptor {
         }
         pid_paths.push(self.dfx_pid_path());
         pid_paths
-    }
-
-    /// This file contains the pid of the icx-proxy process
-    pub fn icx_proxy_pid_path(&self) -> PathBuf {
-        self.data_directory.join("icx-proxy-pid")
     }
 
     /// This file contains the pid of the ic-btc-adapter process
@@ -149,13 +155,24 @@ impl LocalServerDescriptor {
         self.replica_configuration_dir().join("replica-pid")
     }
 
-    /// This file contains the listening port of the pocket-ic process
+    /// This file contains the configuration/API port of the pocket-ic replica process
     pub fn pocketic_port_path(&self) -> PathBuf {
         self.data_directory.join("pocket-ic-port")
     }
 
+    /// This file contains the pid of the pocket-ic replica process
     pub fn pocketic_pid_path(&self) -> PathBuf {
         self.data_directory.join("pocket-ic-pid")
+    }
+
+    /// This file contains the configuration port of the pocket-ic gateway process
+    pub fn pocketic_proxy_port_path(&self) -> PathBuf {
+        self.data_directory.join("pocket-ic-proxy-port")
+    }
+
+    /// This file contains the pid of the pocket-ic gateway process
+    pub fn pocketic_proxy_pid_path(&self) -> PathBuf {
+        self.data_directory.join("pocket-ic-proxy-pid")
     }
 
     /// Returns whether the local server is PocketIC (as opposed to the replica)
@@ -164,9 +181,32 @@ impl LocalServerDescriptor {
         path.exists().then(|| load_json_file(&path)).transpose()
     }
 
+    pub fn load_settings_digest(&mut self) -> Result<(), StructuredFileError> {
+        if self.settings_digest.is_none() {
+            let network_id_path = self.data_directory.join("network-id");
+            let network_metadata: NetworkMetadata = load_json_file(&network_id_path)?;
+            self.settings_digest = Some(network_metadata.settings_digest);
+        }
+        Ok(())
+    }
+
+    pub fn settings_digest(&self) -> &str {
+        self.settings_digest
+            .as_ref()
+            .expect("settings_digest must be set")
+    }
+
+    pub fn data_dir_by_settings_digest(&self) -> PathBuf {
+        if self.scope == LocalNetworkScopeDescriptor::Project {
+            self.data_directory.clone()
+        } else {
+            self.data_directory.join(self.settings_digest())
+        }
+    }
+
     /// The top-level directory holding state for the replica.
     pub fn state_dir(&self) -> PathBuf {
-        self.data_directory.join("state")
+        self.data_dir_by_settings_digest().join("state")
     }
 
     /// The replicated state of the replica.
@@ -174,7 +214,7 @@ impl LocalServerDescriptor {
         self.state_dir().join("replicated_state")
     }
 
-    /// This file contains the listening port of the icx-proxy.
+    /// This file contains the listening port of the HTTP gateway.
     /// This is the port that the agent connects to.
     pub fn webserver_port_path(&self) -> PathBuf {
         self.data_directory.join("webserver-port")
@@ -184,6 +224,11 @@ impl LocalServerDescriptor {
     pub fn effective_config_path(&self) -> PathBuf {
         self.data_directory.join("replica-effective-config.json")
     }
+
+    pub fn effective_config_path_by_settings_digest(&self) -> PathBuf {
+        self.data_dir_by_settings_digest()
+            .join("replica-effective-config.json")
+    }
 }
 
 impl LocalServerDescriptor {
@@ -192,14 +237,6 @@ impl LocalServerDescriptor {
             bind_address,
             ..self
         }
-    }
-
-    pub fn with_replica_port(self, port: u16) -> Self {
-        let replica = ConfigDefaultsReplica {
-            port: Some(port),
-            ..self.replica
-        };
-        Self { replica, ..self }
     }
 
     pub fn with_bitcoin_enabled(self) -> LocalServerDescriptor {
@@ -220,9 +257,16 @@ impl LocalServerDescriptor {
 
     pub fn with_proxy_domains(self, domains: Vec<String>) -> LocalServerDescriptor {
         let proxy = ConfigDefaultsProxy {
-            domain: SerdeVec::Many(domains),
+            domain: Some(SerdeVec::Many(domains)),
         };
         Self { proxy, ..self }
+    }
+
+    pub fn with_settings_digest(self, settings_digest: String) -> Self {
+        Self {
+            settings_digest: Some(settings_digest),
+            ..self
+        }
     }
 }
 

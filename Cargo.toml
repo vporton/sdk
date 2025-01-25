@@ -21,11 +21,12 @@ license = "Apache-2.0"
 [workspace.dependencies]
 candid = "0.10.4"
 candid_parser = "0.1.4"
-ic-agent = { git = "https://github.com/dfinity/agent-rs.git", rev = "8273d321e9a09fd8373bd4e38b0676ec6ad9c260" }
-ic-asset = { path = "src/canisters/frontend/ic-asset" }
+dfx-core = { path = "src/dfx-core", version = "0.1.0" }
+ic-agent = "0.38"
+ic-asset = { path = "src/canisters/frontend/ic-asset", version = "0.21.0" }
 ic-cdk = "0.13.1"
-ic-identity-hsm =  { git = "https://github.com/dfinity/agent-rs.git", rev = "8273d321e9a09fd8373bd4e38b0676ec6ad9c260" }
-ic-utils =  { git = "https://github.com/dfinity/agent-rs.git", rev = "8273d321e9a09fd8373bd4e38b0676ec6ad9c260" }
+ic-identity-hsm = "0.38"
+ic-utils = "0.38"
 
 aes-gcm = "0.10.3"
 anyhow = "1.0.56"
@@ -39,7 +40,7 @@ clap = "4.5"
 clap_complete = "4.5"
 dialoguer = "0.11.0"
 directories-next = "2.0.0"
-flate2 = { version = "1.0.11", default-features = false }
+flate2 = { version = "1.0.11" }
 futures = "0.3.21"
 handlebars = "4.3.3"
 hex = "0.4.3"
@@ -72,7 +73,7 @@ tempfile = "3.3.0"
 thiserror = "1.0.24"
 time = "0.3.9"
 tokio = "1.35"
-url = "2.1.0"
+url = { version = "2.1.0", features = ["serde"] }
 walkdir = "2.3.2"
 
 [profile.release]

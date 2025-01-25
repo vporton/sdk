@@ -6,16 +6,16 @@ use crate::lib::operations::canister::install_canister::install_canister;
 use crate::lib::root_key::fetch_root_key_if_needed;
 use crate::util::blob_from_arguments;
 use crate::util::clap::argument_from_cli::ArgumentFromCliLongOpt;
+use crate::util::clap::install_mode::{InstallModeHint, InstallModeOpt};
 use dfx_core::canister::{install_canister_wasm, install_mode_to_prompt};
 use dfx_core::identity::CallSender;
 
-use anyhow::{anyhow, bail, Context};
+use crate::lib::operations::canister::skip_remote_canister;
+use anyhow::bail;
 use candid::Principal;
 use clap::Parser;
-use ic_utils::interfaces::management_canister::builders::InstallMode;
 use slog::info;
 use std::path::PathBuf;
-use std::str::FromStr;
 
 /// Installs compiled code in a canister.
 #[derive(Parser, Clone)]
@@ -36,11 +36,8 @@ pub struct CanisterInstallOpts {
     #[arg(long)]
     async_call: bool,
 
-    /// Specifies the type of deployment. You can set the canister deployment modes to install, reinstall, or upgrade.
-    /// If auto is selected, either install or upgrade will be used depending on if the canister has already been installed.
-    #[arg(long, short, default_value("install"),
-        value_parser = ["install", "reinstall", "upgrade", "auto"])]
-    mode: String,
+    #[command(flatten)]
+    install_mode: InstallModeOpt,
 
     /// Upgrade the canister even if the .wasm did not change.
     #[arg(long)]
@@ -82,15 +79,11 @@ pub async fn exec(
 ) -> DfxResult {
     fetch_root_key_if_needed(env).await?;
 
-    let mode = if opts.mode == "auto" {
-        None
-    } else {
-        Some(InstallMode::from_str(&opts.mode).map_err(|err| anyhow!(err))?)
-    };
+    let mode_hint = opts.install_mode.mode_for_canister_install()?;
     let mut canister_id_store = env.get_canister_id_store()?;
     let network = env.get_network_descriptor();
 
-    if mode == Some(InstallMode::Reinstall) && (opts.canister.is_none() || opts.all) {
+    if mode_hint == InstallModeHint::Reinstall && (opts.canister.is_none() || opts.all) {
         bail!("The --mode=reinstall is only valid when specifying a single canister, because reinstallation destroys all data in the canister.");
     }
 
@@ -109,7 +102,7 @@ pub async fn exec(
                     opts.always_assist,
                 )?;
                 let wasm_module = dfx_core::fs::read(wasm_path)?;
-                let mode = mode.context("The install mode cannot be auto when using --wasm")?;
+                let mode = mode_hint.to_install_mode_with_wasm_path()?;
                 info!(
                     env.get_logger(),
                     "{} code for canister {}",
@@ -151,7 +144,6 @@ pub async fn exec(
             let canister_info = CanisterInfo::load(&config, canister, Some(canister_id))?;
             if let Some(wasm_path) = opts.wasm {
                 // streamlined version, we can ignore most of the environment
-                let mode = mode.context("The install mode cannot be auto when using --wasm")?;
                 install_canister(
                     env,
                     &mut canister_id_store,
@@ -160,7 +152,7 @@ pub async fn exec(
                     Some(&wasm_path),
                     argument_from_cli.as_deref(),
                     argument_type.as_deref(),
-                    Some(mode),
+                    &mode_hint,
                     call_sender,
                     opts.upgrade_unchanged,
                     None,
@@ -180,7 +172,7 @@ pub async fn exec(
                     None,
                     argument_from_cli.as_deref(),
                     argument_type.as_deref(),
-                    mode,
+                    &mode_hint,
                     call_sender,
                     opts.upgrade_unchanged,
                     None,
@@ -196,7 +188,6 @@ pub async fn exec(
     } else if opts.all {
         // Install all canisters.
         let config = env.get_config_or_anyhow()?;
-        let config_interface = config.get_config();
         let env_file = config.get_output_env_file(opts.output_env_file)?;
         let pull_canisters_in_config = get_pull_canisters_in_config(env)?;
         if let Some(canisters) = &config.get_config().canisters {
@@ -204,13 +195,7 @@ pub async fn exec(
                 if pull_canisters_in_config.contains_key(canister) {
                     continue;
                 }
-                if config_interface.is_remote_canister(canister, &network.name)? {
-                    info!(
-                        env.get_logger(),
-                        "Skipping canister '{}' because it is remote for network '{}'",
-                        canister,
-                        &network.name,
-                    );
+                if skip_remote_canister(env, canister)? {
                     continue;
                 }
 
@@ -224,7 +209,7 @@ pub async fn exec(
                     None,
                     None,
                     None,
-                    mode,
+                    &mode_hint,
                     call_sender,
                     opts.upgrade_unchanged,
                     None,

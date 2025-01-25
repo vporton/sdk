@@ -1,14 +1,11 @@
 use crate::lib::environment::Environment;
 use crate::lib::error::DfxResult;
 use crate::lib::ic_attributes::CanisterSettings;
-use crate::lib::identity::wallet::wallet_canister_id;
 use crate::lib::operations::canister;
 use crate::lib::operations::canister::{
-    deposit_cycles, start_canister, stop_canister, update_settings,
+    deposit_cycles, skip_remote_canister, start_canister, stop_canister, update_settings,
 };
-use crate::lib::operations::cycles_ledger::{
-    cycles_ledger_enabled, wallet_deposit_to_cycles_ledger,
-};
+use crate::lib::operations::cycles_ledger::wallet_deposit_to_cycles_ledger;
 use crate::lib::root_key::fetch_root_key_if_needed;
 use crate::util::assets::wallet_wasm;
 use crate::util::blob_from_arguments;
@@ -18,9 +15,9 @@ use candid::Principal;
 use clap::Parser;
 use dfx_core::canister::build_wallet_canister;
 use dfx_core::cli::ask_for_consent;
+use dfx_core::identity::wallet::wallet_canister_id;
 use dfx_core::identity::CallSender;
 use fn_error_context::context;
-use ic_utils::call::AsyncCall;
 use ic_utils::interfaces::management_canister::attributes::FreezingThreshold;
 use ic_utils::interfaces::management_canister::builders::InstallMode;
 use ic_utils::interfaces::management_canister::CanisterStatus;
@@ -139,7 +136,7 @@ async fn delete_canister(
                         // If there is no wallet, then do not attempt to withdraw the cycles.
                         match wallet_canister_id(network, &identity_name)? {
                             Some(canister_id) => WithdrawTarget::Canister { canister_id },
-                            None if cycles_ledger_enabled() => {
+                            None => {
                                 let Some(my_principal) = env.get_selected_identity_principal()
                                 else {
                                     bail!("Identity has no principal attached")
@@ -151,7 +148,6 @@ async fn delete_canister(
                                     },
                                 }
                             }
-                            _ => WithdrawTarget::NoWithdrawal,
                         }
                     }
                 },
@@ -193,6 +189,7 @@ async fn delete_canister(
                 freezing_threshold: Some(FreezingThreshold::try_from(0u8).unwrap()),
                 reserved_cycles_limit: None,
                 wasm_memory_limit: None,
+                log_visibility: None,
             };
             info!(log, "Setting the controller to identity principal.");
             update_settings(env, canister_id, settings, call_sender).await?;
@@ -213,7 +210,6 @@ async fn delete_canister(
             let install_result = install_builder
                 .build()
                 .context("Failed to build InstallCode call.")?
-                .call_and_wait()
                 .await;
             if install_result.is_ok() {
                 start_canister(env, canister_id, &CallSender::SelectedId).await?;
@@ -252,7 +248,6 @@ async fn delete_canister(
                                     Argument::from_candid((opt_principal,)),
                                     cycles_to_withdraw,
                                 )
-                                .call_and_wait()
                                 .await
                                 .context("Failed mint call.")
                         }
@@ -357,6 +352,9 @@ pub async fn exec(
     } else if opts.all {
         if let Some(canisters) = &config.get_config().canisters {
             for canister in canisters.keys() {
+                if skip_remote_canister(env, canister)? {
+                    continue;
+                }
                 delete_canister(
                     env,
                     canister,

@@ -6,7 +6,7 @@ use crate::lib::canister_info::CanisterInfo;
 use crate::lib::environment::Environment;
 use crate::lib::error::{BuildError, DfxError, DfxResult};
 use crate::lib::metadata::names::{CANDID_ARGS, CANDID_SERVICE};
-use crate::lib::models::canister::{Canister, CanisterPool, Import};
+use crate::lib::models::canister::{Canister, CanisterPool};
 use crate::lib::package_arguments::{self, PackageArguments};
 use crate::util::assets::management_idl;
 use anyhow::Context;
@@ -15,11 +15,12 @@ use dfx_core::config::cache::Cache;
 use dfx_core::config::model::dfinity::{MetadataVisibility, Profile};
 use fn_error_context::context;
 use slog::{info, o, trace, warn, Logger};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::convert::TryFrom;
 use std::path::{Path, PathBuf};
 use std::process::Output;
 use std::sync::Arc;
+use crate::lib::models::canister::MotokoImport;
 
 pub struct MotokoBuilder {
     logger: slog::Logger,
@@ -40,6 +41,55 @@ impl MotokoBuilder {
     }
 }
 
+#[context("Failed to find imports for canister at '{}'.", info.get_main_path().display())]
+fn get_imports(cache: &dyn Cache, info: &MotokoCanisterInfo) -> DfxResult<BTreeSet<MotokoImport>> {
+    #[context("Failed recursive dependency detection at {}.", file.display())]
+    fn get_imports_recursive(
+        cache: &dyn Cache,
+        workspace_root: &Path,
+        file: &Path,
+        result: &mut BTreeSet<MotokoImport>,
+    ) -> DfxResult {
+        if result.contains(&MotokoImport::Relative(file.to_path_buf())) {
+            return Ok(());
+        }
+
+        result.insert(MotokoImport::Relative(file.to_path_buf()));
+
+        let mut command = cache.get_binary_command("moc")?;
+        command.current_dir(workspace_root);
+        let command = command.arg("--print-deps").arg(file);
+        let output = command
+            .output()
+            .with_context(|| format!("Error executing {:#?}", command))?;
+        let output = String::from_utf8_lossy(&output.stdout);
+
+        for line in output.lines() {
+            let import = MotokoImport::try_from(line).context("Failed to create MotokoImport.")?;
+            match import {
+                MotokoImport::Relative(path) => {
+                    get_imports_recursive(cache, workspace_root, path.as_path(), result)?;
+                }
+                _ => {
+                    result.insert(import);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    let mut result = BTreeSet::new();
+    get_imports_recursive(
+        cache,
+        info.get_workspace_root(),
+        info.get_main_path(),
+        &mut result,
+    )?;
+
+    Ok(result)
+}
+
 impl CanisterBuilder for MotokoBuilder {
     #[context("Failed to get dependencies for canister '{}'.", info.get_name())]
     fn get_dependencies(
@@ -57,7 +107,7 @@ impl CanisterBuilder for MotokoBuilder {
                 Ok(order
                     .into_iter()
                     .filter_map(|id| match graph.node_weight(id) {
-                        Some(Import::Canister(name)) => {
+                        Some(MotokoImport::Canister(name)) => {
                             pool.get_first_canister_with_name(name.as_str()) // TODO: a little inefficient
                         }
                         _ => None,
@@ -67,7 +117,7 @@ impl CanisterBuilder for MotokoBuilder {
             }
             Err(err) => {
                 let message = match graph.node_weight(err.node_id()) {
-                    Some(Import::Canister(name)) => name,
+                    Some(MotokoImport::Canister(name)) => name,
                     _ => "<Unknown>",
                 };
                 return Err(DfxError::new(BuildError::DependencyError(format!(
@@ -122,7 +172,7 @@ impl CanisterBuilder for MotokoBuilder {
             .get_imports()
             .borrow()
             .nodes()
-            .contains_key(&Import::Ic("aaaaa-aa".to_string()))
+            .contains_key(&MotokoImport::Ic("aaaaa-aa".to_string()))
         {
             let management_idl_path = idl_dir_path.join("aaaaa-aa.did");
             dfx_core::fs::write(management_idl_path, management_idl()?)?;
@@ -131,7 +181,7 @@ impl CanisterBuilder for MotokoBuilder {
         let cache = &self.cache;
 
         let package_arguments =
-            package_arguments::load(cache.as_ref(), motoko_info.get_packtool())?;
+            package_arguments::load(cache.as_ref(), &None/*FIXME*/, motoko_info.get_packtool())?;
         let mut package_arguments_map = BTreeMap::<&str, &str>::new();
         {
             // block
@@ -180,6 +230,7 @@ impl CanisterBuilder for MotokoBuilder {
             output: output_wasm_path,
             idl_path: idl_dir_path,
             idl_map: &id_map,
+            workspace_root: canister_info.get_workspace_root(),
         };
         motoko_compile(&self.logger, cache.as_ref(), &params)?;
 
@@ -205,9 +256,7 @@ impl CanisterBuilder for MotokoBuilder {
         _config: &BuildConfig,
     ) -> DfxResult<PathBuf> {
         // get the path to candid file from dfx build
-        let motoko_info = info.as_info::<MotokoCanisterInfo>()?;
-        let idl_from_build = motoko_info.get_output_idl_path().to_path_buf();
-        Ok(idl_from_build)
+        Ok(info.get_output_idl_path().to_path_buf())
     }
 }
 
@@ -219,6 +268,7 @@ enum BuildTarget {
 
 struct MotokoParams<'a> {
     build_target: BuildTarget,
+    workspace_root: &'a Path,
     idl_path: &'a Path,
     idl_map: &'a CanisterIdMap,
     package_arguments: &'a PackageArguments,
@@ -261,12 +311,13 @@ impl MotokoParams<'_> {
 #[context("Failed to compile Motoko.")]
 fn motoko_compile(logger: &Logger, cache: &dyn Cache, params: &MotokoParams<'_>) -> DfxResult {
     let mut cmd = cache.get_binary_command("moc")?;
+    cmd.current_dir(params.workspace_root);
     params.to_args(&mut cmd);
     run_command(logger, &mut cmd, params.suppress_warning).context("Failed to run 'moc'.")?;
     Ok(())
 }
 
-impl TryFrom<&str> for Import {
+impl TryFrom<&str> for MotokoImport {
     type Error = DfxError;
 
     fn try_from(line: &str) -> Result<Self, DfxError> {
@@ -293,9 +344,9 @@ impl TryFrom<&str> for Import {
                 }
                 let (prefix, name) = url.split_at(index + 1);
                 match prefix {
-                    "canister:" => Import::Canister(name.to_owned()),
-                    "ic:" => Import::Ic(name.to_owned()),
-                    "mo:" => Import::Lib(name.to_owned()),
+                    "canister:" => MotokoImport::Canister(name.to_owned()),
+                    "ic:" => MotokoImport::Ic(name.to_owned()),
+                    "mo:" => MotokoImport::Lib(name.to_owned()),
                     _ => {
                         return Err(DfxError::new(BuildError::DependencyError(format!(
                             "Unknown import {}",
@@ -313,7 +364,7 @@ impl TryFrom<&str> for Import {
                             path.display()
                         ))));
                     };
-                    Import::FullPath(path)
+                    MotokoImport::FullPath(path)
                 }
                 None => {
                     return Err(DfxError::new(BuildError::DependencyError(format!(

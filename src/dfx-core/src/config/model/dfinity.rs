@@ -9,6 +9,7 @@ use crate::error::dfx_config::AddDependenciesError::CanisterCircularDependency;
 use crate::error::dfx_config::GetCanisterNamesWithDependenciesError::AddDependenciesFailed;
 use crate::error::dfx_config::GetComputeAllocationError::GetComputeAllocationFailed;
 use crate::error::dfx_config::GetFreezingThresholdError::GetFreezingThresholdFailed;
+use crate::error::dfx_config::GetLogVisibilityError::GetLogVisibilityFailed;
 use crate::error::dfx_config::GetMemoryAllocationError::GetMemoryAllocationFailed;
 use crate::error::dfx_config::GetPullCanistersError::PullCanistersSameId;
 use crate::error::dfx_config::GetRemoteCanisterIdError::GetRemoteCanisterIdFailed;
@@ -17,13 +18,14 @@ use crate::error::dfx_config::GetSpecifiedIdError::GetSpecifiedIdFailed;
 use crate::error::dfx_config::GetWasmMemoryLimitError::GetWasmMemoryLimitFailed;
 use crate::error::dfx_config::{
     AddDependenciesError, GetCanisterConfigError, GetCanisterNamesWithDependenciesError,
-    GetComputeAllocationError, GetFreezingThresholdError, GetMemoryAllocationError,
-    GetPullCanistersError, GetRemoteCanisterIdError, GetReservedCyclesLimitError,
-    GetSpecifiedIdError, GetWasmMemoryLimitError,
+    GetComputeAllocationError, GetFreezingThresholdError, GetLogVisibilityError,
+    GetMemoryAllocationError, GetPullCanistersError, GetRemoteCanisterIdError,
+    GetReservedCyclesLimitError, GetSpecifiedIdError, GetWasmMemoryLimitError,
 };
+use crate::error::fs::CanonicalizePathError;
 use crate::error::load_dfx_config::LoadDfxConfigError;
 use crate::error::load_dfx_config::LoadDfxConfigError::{
-    DetermineCurrentWorkingDirFailed, ResolveConfigPathFailed,
+    DetermineCurrentWorkingDirFailed, ResolveConfigPath,
 };
 use crate::error::load_networks_config::LoadNetworksConfigError;
 use crate::error::load_networks_config::LoadNetworksConfigError::{
@@ -34,9 +36,7 @@ use crate::error::socket_addr_conversion::SocketAddrConversionError::{
     EmptyIterator, ParseSocketAddrFailed,
 };
 use crate::error::structured_file::StructuredFileError;
-use crate::error::structured_file::StructuredFileError::{
-    DeserializeJsonFileFailed, ReadJsonFileFailed,
-};
+use crate::error::structured_file::StructuredFileError::DeserializeJsonFileFailed;
 use crate::extension::manager::ExtensionManager;
 use crate::fs::create_dir_all;
 use crate::json::save_json_file;
@@ -44,6 +44,7 @@ use crate::json::structure::{PossiblyStr, SerdeVec};
 use crate::util::ByteSchema;
 use byte_unit::Byte;
 use candid::Principal;
+use ic_utils::interfaces::management_canister::LogVisibility;
 use schemars::JsonSchema;
 use serde::de::{Error as _, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
@@ -275,6 +276,7 @@ pub struct ConfigCanistersCanister {
 
     /// # Post-Install Commands
     /// One or more commands to run post canister installation.
+    /// These commands are executed in the root of the project.
     #[serde(default)]
     pub post_install: SerdeVec<String>,
 
@@ -342,8 +344,14 @@ pub enum CanisterTypeProperties {
     /// # Rust-Specific Properties
     Rust {
         /// # Package Name
-        /// Name of the rust package that compiles to this canister's Wasm.
+        /// Name of the Rust package that compiles this canister's Wasm.
         package: String,
+
+        /// # Crate name
+        /// Name of the Rust crate that compiles to this canister's Wasm.
+        /// If left unspecified, defaults to the crate with the same name as the package.
+        #[serde(rename = "crate")]
+        crate_name: Option<String>,
 
         /// # Candid File
         /// Path of this canister's candid interface declaration.
@@ -381,6 +389,7 @@ pub enum CanisterTypeProperties {
         /// Commands that are executed in order to produce this canister's Wasm module.
         /// Expected to produce the Wasm in the path specified by the 'wasm' field.
         /// No build commands are allowed if the `wasm` field is a URL.
+        /// These commands are executed in the root of the project.
         #[schemars(default)]
         build: SerdeVec<String>,
     },
@@ -403,6 +412,28 @@ impl CanisterTypeProperties {
             Self::Assets { .. } => "assets",
             Self::Custom { .. } => "custom",
             Self::Pull { .. } => "pull",
+        }
+    }
+}
+
+#[derive(Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CanisterLogVisibility {
+    #[default]
+    Controllers,
+    Public,
+    #[schemars(with = "Vec::<String>")]
+    AllowedViewers(Vec<Principal>),
+}
+
+impl From<CanisterLogVisibility> for LogVisibility {
+    fn from(value: CanisterLogVisibility) -> Self {
+        match value {
+            CanisterLogVisibility::Controllers => LogVisibility::Controllers,
+            CanisterLogVisibility::Public => LogVisibility::Public,
+            CanisterLogVisibility::AllowedViewers(viewers) => {
+                LogVisibility::AllowedViewers(viewers)
+            }
         }
     }
 }
@@ -454,6 +485,13 @@ pub struct InitializationValues {
     /// Can be specified as an integer, or as an SI unit string (e.g. "4KB", "2 MiB")
     #[schemars(with = "Option<ByteSchema>")]
     pub wasm_memory_limit: Option<Byte>,
+
+    /// # Log Visibility
+    /// Specifies who is allowed to read the canister's logs.
+    ///
+    /// Can be "public", "controllers" or "allowed_viewers" with a list of principals.
+    #[schemars(with = "Option<CanisterLogVisibility>")]
+    pub log_visibility: Option<CanisterLogVisibility>,
 }
 
 /// # Declarations Configuration
@@ -595,6 +633,7 @@ impl Default for ConfigDefaultsBootstrap {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ConfigDefaultsBuild {
     /// Main command to run the packtool.
+    /// This command is executed in the root of the project.
     pub packtool: Option<String>,
 
     /// Arguments for packtool.
@@ -619,7 +658,7 @@ impl Default for ReplicaLogLevel {
 }
 
 impl ReplicaLogLevel {
-    pub fn as_ic_starter_string(&self) -> String {
+    pub fn to_ic_starter_string(&self) -> String {
         match self {
             Self::Critical => "critical".to_string(),
             Self::Error => "error".to_string(),
@@ -647,11 +686,11 @@ pub struct ConfigDefaultsReplica {
     pub log_level: Option<ReplicaLogLevel>,
 }
 
-/// Configuration for icx-proxy.
+/// Configuration for the HTTP gateway.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ConfigDefaultsProxy {
     /// A list of domains that can be served. These are used for canister resolution [default: localhost]
-    pub domain: SerdeVec<String>,
+    pub domain: Option<SerdeVec<String>>,
 }
 
 // Schemars doesn't add the enum value's docstrings. Therefore the explanations have to be up here.
@@ -974,6 +1013,19 @@ impl ConfigInterface {
             .wasm_memory_limit)
     }
 
+    pub fn get_log_visibility(
+        &self,
+        canister_name: &str,
+    ) -> Result<Option<LogVisibility>, GetLogVisibilityError> {
+        Ok(self
+            .get_canister_config(canister_name)
+            .map_err(|e| GetLogVisibilityFailed(canister_name.to_string(), e))?
+            .initialization_values
+            .log_visibility
+            .clone()
+            .map(|visibility| visibility.into()))
+    }
+
     pub fn get_canister_config(
         &self,
         canister_name: &str,
@@ -1055,8 +1107,8 @@ pub struct Config {
 
 #[allow(dead_code)]
 impl Config {
-    fn resolve_config_path(working_dir: &Path) -> Result<Option<PathBuf>, LoadDfxConfigError> {
-        let mut curr = crate::fs::canonicalize(working_dir).map_err(ResolveConfigPathFailed)?;
+    fn resolve_config_path(working_dir: &Path) -> Result<Option<PathBuf>, CanonicalizePathError> {
+        let mut curr = crate::fs::canonicalize(working_dir)?;
         while curr.parent().is_some() {
             if curr.join(CONFIG_FILE_NAME).is_file() {
                 return Ok(Some(curr.join(CONFIG_FILE_NAME)));
@@ -1077,7 +1129,7 @@ impl Config {
         path: &Path,
         extension_manager: Option<&ExtensionManager>,
     ) -> Result<Config, LoadDfxConfigError> {
-        let content = crate::fs::read(path).map_err(LoadDfxConfigError::ReadFile)?;
+        let content = crate::fs::read(path)?;
         Config::from_slice(path.to_path_buf(), &content, extension_manager)
     }
 
@@ -1085,7 +1137,7 @@ impl Config {
         working_dir: &Path,
         extension_manager: Option<&ExtensionManager>,
     ) -> Result<Option<Config>, LoadDfxConfigError> {
-        let path = Config::resolve_config_path(working_dir)?;
+        let path = Config::resolve_config_path(working_dir).map_err(ResolveConfigPath)?;
         path.map(|path| Config::from_file(&path, extension_manager))
             .transpose()
     }
@@ -1165,10 +1217,8 @@ impl Config {
                     let p = self.get_project_root().join(p);
 
                     // cannot canonicalize a path that doesn't exist, but the parent should exist
-                    let env_parent =
-                        crate::fs::parent(&p).map_err(GetOutputEnvFileError::Parent)?;
-                    let env_parent = crate::fs::canonicalize(&env_parent)
-                        .map_err(GetOutputEnvFileError::Canonicalize)?;
+                    let env_parent = crate::fs::parent(&p)?;
+                    let env_parent = crate::fs::canonicalize(&env_parent)?;
                     if !env_parent.starts_with(self.get_project_root()) {
                         Err(GetOutputEnvFileError::OutputEnvFileMustBeInProjectRoot(p))
                     } else {
@@ -1211,6 +1261,7 @@ impl<'de> Visitor<'de> for PropertiesVisitor {
         let mut wasm = None;
         let mut candid = None;
         let mut package = None;
+        let mut crate_name = None;
         let mut source = None;
         let mut build = None;
         let mut r#type = None;
@@ -1219,6 +1270,7 @@ impl<'de> Visitor<'de> for PropertiesVisitor {
         while let Some(key) = map.next_key::<String>()? {
             match &*key {
                 "package" => package = Some(map.next_value()?),
+                "crate" => crate_name = Some(map.next_value()?),
                 "source" => source = Some(map.next_value()?),
                 "candid" => candid = Some(map.next_value()?),
                 "build" => build = Some(map.next_value()?),
@@ -1234,6 +1286,7 @@ impl<'de> Visitor<'de> for PropertiesVisitor {
             Some("rust") => CanisterTypeProperties::Rust {
                 candid: PathBuf::from(candid.ok_or_else(|| missing_field("candid"))?),
                 package: package.ok_or_else(|| missing_field("package"))?,
+                crate_name,
             },
             Some("assets") => CanisterTypeProperties::Assets {
                 source: source.ok_or_else(|| missing_field("source"))?,
@@ -1288,7 +1341,7 @@ impl NetworksConfig {
     }
 
     fn from_file(path: &Path) -> Result<NetworksConfig, StructuredFileError> {
-        let content = crate::fs::read(path).map_err(ReadJsonFileFailed)?;
+        let content = crate::fs::read(path)?;
 
         let networks: BTreeMap<String, ConfigNetwork> = serde_json::from_slice(&content)
             .map_err(|e| DeserializeJsonFileFailed(Box::new(path.to_path_buf()), e))?;

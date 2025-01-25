@@ -2,7 +2,6 @@ use crate::lib::agent::create_agent_environment;
 use crate::lib::canister_info::CanisterInfo;
 use crate::lib::environment::Environment;
 use crate::lib::error::DfxResult;
-use crate::lib::named_canister::get_ui_canister_url;
 use crate::lib::network::network_opt::NetworkOpt;
 use crate::lib::operations::canister::deploy_canisters::deploy_canisters;
 use crate::lib::operations::canister::deploy_canisters::DeployMode::{
@@ -10,24 +9,21 @@ use crate::lib::operations::canister::deploy_canisters::DeployMode::{
 };
 use crate::lib::root_key::fetch_root_key_if_needed;
 use crate::util::clap::argument_from_cli::ArgumentFromCliLongOpt;
+use crate::util::clap::install_mode::{InstallModeHint, InstallModeOpt};
 use crate::util::clap::parsers::{cycle_amount_parser, icrc_subaccount_parser};
 use crate::util::clap::subnet_selection_opt::SubnetSelectionOpt;
-use anyhow::{anyhow, bail, Context};
+use crate::util::url::{construct_frontend_url, construct_ui_canister_url};
+use anyhow::{anyhow, bail};
 use candid::Principal;
 use clap::Parser;
 use console::Style;
 use dfx_core::config::model::network_descriptor::NetworkDescriptor;
 use dfx_core::identity::CallSender;
-use fn_error_context::context;
-use ic_utils::interfaces::management_canister::builders::InstallMode;
 use icrc_ledger_types::icrc1::account::Subaccount;
 use slog::info;
 use std::collections::BTreeMap;
-use std::net::{Ipv4Addr, Ipv6Addr};
 use std::path::PathBuf;
-use std::str::FromStr;
 use tokio::runtime::Runtime;
-use url::Host::{Domain, Ipv4, Ipv6};
 use url::Url;
 
 /// Deploys all or a specific canister from the code in your project. By default, all canisters are deployed.
@@ -40,12 +36,8 @@ pub struct DeployOpts {
     #[command(flatten)]
     argument_from_cli: ArgumentFromCliLongOpt,
 
-    /// Force the type of deployment to be reinstall, which overwrites the module.
-    /// In other words, this erases all data in the canister.
-    /// By default, upgrade will be chosen automatically if the module already exists,
-    /// or install if it does not.
-    #[arg(long, short, value_parser = ["reinstall"])]
-    mode: Option<String>,
+    #[command(flatten)]
+    install_mode: InstallModeOpt,
 
     /// Upgrade the canister even if the .wasm did not change.
     #[arg(long)]
@@ -130,21 +122,15 @@ pub fn exec(env: &dyn Environment, opts: DeployOpts) -> DfxResult {
     if argument_from_cli.is_some() && canister_name.is_none() {
         bail!("The init argument can only be set when deploying a single canister.");
     }
-    let mode = opts
-        .mode
-        .as_deref()
-        .map(InstallMode::from_str)
-        .transpose()
-        .map_err(|err| anyhow!(err))
-        .context("Failed to parse InstallMode.")?;
+    let mode_hint = opts.install_mode.mode_for_deploy()?;
     let config = env.get_config_or_anyhow()?;
     let env_file = config.get_output_env_file(opts.output_env_file)?;
     let mut subnet_selection =
         runtime.block_on(opts.subnet_selection.into_subnet_selection_type(&env))?;
     let with_cycles = opts.with_cycles;
 
-    let deploy_mode = match (mode, canister_name) {
-        (Some(InstallMode::Reinstall), Some(canister_name)) => {
+    let deploy_mode = match (&mode_hint, canister_name) {
+        (InstallModeHint::Reinstall, Some(canister_name)) => {
             let network = env.get_network_descriptor();
             if config
                 .get_config()
@@ -155,28 +141,25 @@ pub fn exec(env: &dyn Environment, opts: DeployOpts) -> DfxResult {
             }
             ForceReinstallSingleCanister(canister_name.to_string())
         }
-        (Some(InstallMode::Reinstall), None) => {
+        (InstallModeHint::Reinstall, None) => {
             bail!("The --mode=reinstall is only valid when deploying a single canister, because reinstallation destroys all data in the canister.");
         }
-        (Some(_), _) => {
-            unreachable!("The only valid option for --mode is --mode=reinstall");
-        }
-        (None, None) if opts.by_proposal => {
+        (_, None) if opts.by_proposal => {
             bail!("The --by-proposal flag is only valid when deploying a single canister.");
         }
-        (None, Some(canister_name)) if opts.by_proposal => {
+        (_, Some(canister_name)) if opts.by_proposal => {
             PrepareForProposal(canister_name.to_string())
         }
-        (None, None) if opts.compute_evidence => {
+        (_, None) if opts.compute_evidence => {
             bail!("The --compute-evidence flag is only valid when deploying a single canister.");
         }
-        (None, Some(canister_name)) if opts.compute_evidence => {
+        (_, Some(canister_name)) if opts.compute_evidence => {
             ComputeEvidence(canister_name.to_string())
         }
-        (None, _) => NormalDeploy,
+        (_, _) => NormalDeploy,
     };
 
-    let call_sender = CallSender::from(&opts.wallet)
+    let call_sender = CallSender::from(&opts.wallet, env.get_network_descriptor())
         .map_err(|e| anyhow!("Failed to determine call sender: {}", e))?;
 
     runtime.block_on(fetch_root_key_if_needed(&env))?;
@@ -187,6 +170,7 @@ pub fn exec(env: &dyn Environment, opts: DeployOpts) -> DfxResult {
         argument_from_cli.as_deref(),
         argument_type.as_deref(),
         &deploy_mode,
+        &mode_hint,
         opts.upgrade_unchanged,
         with_cycles,
         opts.created_at_time,
@@ -273,59 +257,4 @@ fn display_urls(env: &dyn Environment) -> DfxResult {
     }
 
     Ok(())
-}
-
-#[context("Failed to construct frontend url for canister {} on network '{}'.", canister_id, network.name)]
-fn construct_frontend_url(
-    network: &NetworkDescriptor,
-    canister_id: &Principal,
-) -> DfxResult<(Url, Option<Url>)> {
-    let mut url = Url::parse(&network.providers[0]).with_context(|| {
-        format!(
-            "Failed to parse url for network provider {}.",
-            &network.providers[0]
-        )
-    })?;
-    // For localhost defined by IP address we suggest `<canister_id>.localhost` as an alternate way of accessing the canister because it plays nicer with SPAs.
-    // We still display `<IP>?canisterId=<canister_id>` because Safari does not support localhost subdomains
-    let url2 = if url.host() == Some(Ipv4(Ipv4Addr::LOCALHOST))
-        || url.host() == Some(Ipv6(Ipv6Addr::LOCALHOST))
-    {
-        let mut subdomain_url = url.clone();
-        let localhost_with_subdomain = format!("{}.localhost", canister_id);
-        subdomain_url
-            .set_host(Some(&localhost_with_subdomain))
-            .with_context(|| format!("Failed to set host to {}.", localhost_with_subdomain))?;
-        Some(subdomain_url)
-    } else {
-        None
-    };
-
-    if let Some(Domain(domain)) = url.host() {
-        let host = format!("{}.{}", canister_id, domain);
-        url.set_host(Some(&host))
-            .with_context(|| format!("Failed to set host to {}.", host))?;
-    } else {
-        let query = format!("canisterId={}", canister_id);
-        url.set_query(Some(&query));
-    };
-
-    Ok((url, url2))
-}
-
-#[context("Failed to construct ui canister url for {} on network '{}'.", canister_id, env.get_network_descriptor().name)]
-fn construct_ui_canister_url(
-    env: &dyn Environment,
-    canister_id: &Principal,
-) -> DfxResult<Option<Url>> {
-    let mut url = get_ui_canister_url(env)?;
-    if let Some(base_url) = url.as_mut() {
-        let query_with_canister_id = if let Some(query) = base_url.query() {
-            format!("{query}&id={canister_id}")
-        } else {
-            format!("id={canister_id}")
-        };
-        base_url.set_query(Some(&query_with_canister_id));
-    };
-    Ok(url)
 }

@@ -7,7 +7,7 @@ use crate::lib::ic_attributes::CanisterSettings as DfxCanisterSettings;
 use crate::lib::identity::wallet::{get_or_create_wallet_canister, GetOrCreateWalletCanisterError};
 use crate::lib::ledger_types::MAINNET_CYCLE_MINTER_CANISTER_ID;
 use crate::lib::operations::canister::motoko_playground::reserve_canister_with_playground;
-use crate::lib::operations::cycles_ledger::{create_with_cycles_ledger, cycles_ledger_enabled};
+use crate::lib::operations::cycles_ledger::create_with_cycles_ledger;
 use crate::util::clap::subnet_selection_opt::SubnetSelectionType;
 use anyhow::{anyhow, bail, Context};
 use candid::Principal;
@@ -138,12 +138,10 @@ The command line value will be used.",
             {
                 Ok(wallet) => CallSender::Wallet(*wallet.canister_id_()),
                 Err(err) => {
-                    if cycles_ledger_enabled()
-                        && matches!(
-                            err,
-                            GetOrCreateWalletCanisterError::NoWalletConfigured { .. }
-                        )
-                    {
+                    if matches!(
+                        err,
+                        GetOrCreateWalletCanisterError::NoWalletConfigured { .. }
+                    ) {
                         debug!(env.get_logger(), "No wallet configured.");
                         *call_sender
                     } else {
@@ -158,7 +156,7 @@ The command line value will be used.",
         CallSender::SelectedId => {
             let auto_wallet_disabled = std::env::var("DFX_DISABLE_AUTO_WALLET").is_ok();
             let ic_network = env.get_network_descriptor().is_ic;
-            if cycles_ledger_enabled() && (ic_network || auto_wallet_disabled) {
+            if ic_network || auto_wallet_disabled {
                 create_with_cycles_ledger(
                     env,
                     agent,
@@ -218,7 +216,7 @@ async fn create_with_management_canister(
         .with_optional_freezing_threshold(settings.freezing_threshold)
         .with_optional_reserved_cycles_limit(settings.reserved_cycles_limit)
         .with_optional_wasm_memory_limit(settings.wasm_memory_limit)
-        .call_and_wait()
+        .with_optional_log_visibility(settings.log_visibility)
         .await;
     const NEEDS_WALLET: &str = "In order to create a canister on this network, you must use a wallet in order to allocate cycles to the new canister. \
                         To do this, remove the --no-wallet argument and try again. It is also possible to create a canister on this network \
@@ -229,7 +227,9 @@ async fn create_with_management_canister(
             status, content, ..
         })) if (400..500).contains(&status) => {
             let message = String::from_utf8_lossy(&content);
-            if message.contains("not contained on any subnet") {
+            if message.contains(
+                "does not belong to an existing subnet and it is not a mainnet canister ID.",
+            ) {
                 Err(anyhow!("{message}"))
             } else {
                 Err(anyhow!(NEEDS_WALLET))
@@ -285,7 +285,6 @@ async fn create_with_wallet(
                 },)),
                 cycles,
             )
-            .call_and_wait()
             .await;
         match call_result {
             Ok((Ok(canister_id),)) => Ok(canister_id),
@@ -303,6 +302,9 @@ async fn create_with_wallet(
         }
         if settings.wasm_memory_limit.is_some() {
             bail!("Cannot create a canister using a wallet if the wasm_memory_limit is set. Please create with --no-wallet or use dfx canister update-settings instead.")
+        }
+        if settings.log_visibility.is_some() {
+            bail!("Cannot create a canister using a wallet if log_visibility is set. Please create with --no-wallet or use dfx canister update-settings instead.")
         }
         match wallet
             .wallet_create_canister(
